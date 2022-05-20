@@ -82,7 +82,7 @@ MoveItCpp::MoveItCpp(const rclcpp::Node::SharedPtr& node, const Options& options
   }
 
   trajectory_execution_manager_ = std::make_shared<trajectory_execution_manager::TrajectoryExecutionManager>(
-      node_, robot_model_, planning_scene_monitor_->getStateMonitor());
+      node_, robot_model_, planning_scene_monitor_);
 
   RCLCPP_DEBUG(LOGGER, "MoveItCpp running");
 }
@@ -271,11 +271,11 @@ MoveItCpp::execute(const std::string& group_name, const robot_trajectory::RobotT
   robot_trajectory->getRobotTrajectoryMsg(robot_trajectory_msg);
   if (blocking)
   {
-    trajectory_execution_manager_->push(robot_trajectory_msg);
+    trajectory_execution_manager_->pushToBlockingQueue(robot_trajectory_msg);
     trajectory_execution_manager_->execute();
-    return trajectory_execution_manager_->waitForExecution();
+    return trajectory_execution_manager_->waitForBlockingExecution();
   }
-  trajectory_execution_manager_->pushAndExecute(robot_trajectory_msg);
+  trajectory_execution_manager_->pushAndExecuteSimultaneous(robot_trajectory_msg);
   return moveit_controller_manager::ExecutionStatus::RUNNING;
 }
 

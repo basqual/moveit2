@@ -890,7 +890,7 @@ public:
     return res->error_code;
   }
 
-  moveit::core::MoveItErrorCode execute(const moveit_msgs::msg::RobotTrajectory& trajectory, bool wait)
+  moveit::core::MoveItErrorCode execute(const moveit_msgs::msg::RobotTrajectory& trajectory, bool wait, rclcpp::Duration backlog_timeout)
   {
     if (!execute_action_client_ || !execute_action_client_->action_server_is_ready())
     {
@@ -1536,24 +1536,24 @@ moveit::core::MoveItErrorCode MoveGroupInterface::move()
   return impl_->move(true);
 }
 
-moveit::core::MoveItErrorCode MoveGroupInterface::asyncExecute(const Plan& plan)
+moveit::core::MoveItErrorCode MoveGroupInterface::asyncExecute(const Plan& plan,rclcpp::Duration backlog_timeout)
 {
-  return impl_->execute(plan.trajectory_, false);
+  return impl_->execute(plan.trajectory_, false, backlog_timeout);
 }
 
-moveit::core::MoveItErrorCode MoveGroupInterface::asyncExecute(const moveit_msgs::msg::RobotTrajectory& trajectory)
+moveit::core::MoveItErrorCode MoveGroupInterface::asyncExecute(const moveit_msgs::msg::RobotTrajectory& trajectory,rclcpp::Duration backlog_timeout)
 {
-  return impl_->execute(trajectory, false);
+  return impl_->execute(trajectory, false, backlog_timeout);
 }
 
-moveit::core::MoveItErrorCode MoveGroupInterface::execute(const Plan& plan)
+moveit::core::MoveItErrorCode MoveGroupInterface::execute(const Plan& plan,rclcpp::Duration backlog_timeout)
 {
-  return impl_->execute(plan.trajectory_, true);
+  return impl_->execute(plan.trajectory_, true, backlog_timeout);
 }
 
-moveit::core::MoveItErrorCode MoveGroupInterface::execute(const moveit_msgs::msg::RobotTrajectory& trajectory)
+moveit::core::MoveItErrorCode MoveGroupInterface::execute(const moveit_msgs::msg::RobotTrajectory& trajectory,rclcpp::Duration backlog_timeout)
 {
-  return impl_->execute(trajectory, true);
+  return impl_->execute(trajectory, true, backlog_timeout);
 }
 
 moveit::core::MoveItErrorCode MoveGroupInterface::plan(Plan& plan)

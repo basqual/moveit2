@@ -251,6 +251,7 @@ void RobotTrajectory::getRobotTrajectoryMsg(moveit_msgs::msg::RobotTrajectory& t
 
   std::vector<const moveit::core::JointModel*> onedof;
   std::vector<const moveit::core::JointModel*> mdof;
+  trajectory.group_name = group_ ? group_->getName() : "";
   trajectory.joint_trajectory.joint_names.clear();
   trajectory.multi_dof_joint_trajectory.joint_names.clear();
 
@@ -276,14 +277,14 @@ void RobotTrajectory::getRobotTrajectoryMsg(moveit_msgs::msg::RobotTrajectory& t
   if (!onedof.empty())
   {
     trajectory.joint_trajectory.header.frame_id = robot_model_->getModelFrame();
-    trajectory.joint_trajectory.header.stamp = rclcpp::Time(0, 0, RCL_ROS_TIME);
+    trajectory.joint_trajectory.header.stamp = start_time_;
     trajectory.joint_trajectory.points.resize(waypoints_.size());
   }
 
   if (!mdof.empty())
   {
     trajectory.multi_dof_joint_trajectory.header.frame_id = robot_model_->getModelFrame();
-    trajectory.multi_dof_joint_trajectory.header.stamp = rclcpp::Time(0, 0, RCL_ROS_TIME);
+    trajectory.multi_dof_joint_trajectory.header.stamp = start_time_;
     trajectory.multi_dof_joint_trajectory.points.resize(waypoints_.size());
   }
 
@@ -336,34 +337,145 @@ void RobotTrajectory::getRobotTrajectoryMsg(moveit_msgs::msg::RobotTrajectory& t
       {
         geometry_msgs::msg::TransformStamped ts = tf2::eigenToTransform(waypoints_[i]->getJointTransform(mdof[j]));
         trajectory.multi_dof_joint_trajectory.points[i].transforms[j] = ts.transform;
-        // TODO: currently only checking for planar multi DOF joints / need to add check for floating
-        if (waypoints_[i]->hasVelocities() && (mdof[j]->getType() == moveit::core::JointModel::JointType::PLANAR))
-        {
-          const std::vector<std::string> names = mdof[j]->getVariableNames();
-          const double* velocities = waypoints_[i]->getJointVelocities(mdof[j]);
 
-          geometry_msgs::msg::Twist point_velocity;
-
-          for (std::size_t k = 0; k < names.size(); ++k)
+        if(mdof[j]->getType() == moveit::core::JointModel::JointType::PLANAR){
+            /*
+            //Copied from planar_joint_model.cpp
+            local_variable_names_.push_back("x");
+            local_variable_names_.push_back("y");
+            local_variable_names_.push_back("theta");
+            */
+          if (waypoints_[i]->hasVelocities())
           {
-            if (names[k].find("/x") != std::string::npos)
+            const std::vector<std::string> names = mdof[j]->getVariableNames();
+            const double* velocities = waypoints_[i]->getJointVelocities(mdof[j]);
+
+            geometry_msgs::msg::Twist point_velocity;
+
+            for (std::size_t k = 0; k < names.size(); ++k)
             {
-              point_velocity.linear.x = velocities[k];
+              if (names[k].find("/x") != std::string::npos)
+              {
+                point_velocity.linear.x = velocities[k];
+              }
+              else if (names[k].find("/y") != std::string::npos)
+              {
+                point_velocity.linear.y = velocities[k];
+              }
+              else if (names[k].find("/theta") != std::string::npos)
+              {
+                point_velocity.angular.z = velocities[k];
+              }
             }
-            else if (names[k].find("/y") != std::string::npos)
-            {
-              point_velocity.linear.y = velocities[k];
-            }
-            else if (names[k].find("/z") != std::string::npos)
-            {
-              point_velocity.linear.z = velocities[k];
-            }
-            else if (names[k].find("/theta") != std::string::npos)
-            {
-              point_velocity.angular.z = velocities[k];
-            }
+            trajectory.multi_dof_joint_trajectory.points[i].velocities.push_back(point_velocity);
           }
-          trajectory.multi_dof_joint_trajectory.points[i].velocities.push_back(point_velocity);
+          if(waypoints_[i]->hasAccelerations()){
+            const std::vector<std::string> names = mdof[j]->getVariableNames();
+            const double* accelerations = waypoints_[i]->getJointAccelerations(mdof[j]);
+
+            geometry_msgs::msg::Twist point_acceleration;
+
+            for (std::size_t k = 0; k < names.size(); ++k)
+            {
+              if (names[k].find("/x") != std::string::npos)
+              {
+                point_acceleration.linear.x = accelerations[k];
+              }
+              else if (names[k].find("/y") != std::string::npos)
+              {
+                point_acceleration.linear.y = accelerations[k];
+              }
+              else if (names[k].find("/theta") != std::string::npos)
+              {
+                point_acceleration.angular.z = accelerations[k];
+              }
+            }
+            trajectory.multi_dof_joint_trajectory.points[i].accelerations.push_back(point_acceleration);
+          }
+        }
+        else if(mdof[j]->getType() == moveit::core::JointModel::JointType::FLOATING)
+        {
+            /*
+            //Copied from floating_joint_model.cpp
+            local_variable_names_.push_back("trans_x");
+            local_variable_names_.push_back("trans_y");
+            local_variable_names_.push_back("trans_z");
+            local_variable_names_.push_back("rot_x");
+            local_variable_names_.push_back("rot_y");
+            local_variable_names_.push_back("rot_z");
+            local_variable_names_.push_back("rot_w");
+            */
+          if(waypoints_[i]->hasVelocities())
+          {
+            const std::vector<std::string> names = mdof[j]->getVariableNames();
+            const double* velocities = waypoints_[i]->getJointVelocities(mdof[j]);
+
+            geometry_msgs::msg::Twist point_velocity;
+
+            for (std::size_t k = 0; k < names.size(); ++k)
+            {
+              if (names[k].find("/trans_x") != std::string::npos)
+              {
+                point_velocity.linear.x = velocities[k];
+              }
+              else if (names[k].find("/trans_y") != std::string::npos)
+              {
+                point_velocity.linear.y = velocities[k];
+              }
+              else if (names[k].find("/trans_z") != std::string::npos)
+              {
+                point_velocity.linear.z = velocities[k];
+              }
+              else if (names[k].find("/rot_x") != std::string::npos)
+              {
+                point_velocity.angular.x = velocities[k];
+              }
+              else if (names[k].find("/rot_y") != std::string::npos)
+              {
+                point_velocity.angular.y = velocities[k];
+              }
+              else if (names[k].find("/rot_z") != std::string::npos)
+              {
+                point_velocity.angular.z = velocities[k];
+              }
+            }
+            trajectory.multi_dof_joint_trajectory.points[i].velocities.push_back(point_velocity);
+          }
+          if(waypoints_[i]->hasAccelerations()){
+            const std::vector<std::string> names = mdof[j]->getVariableNames();
+            const double* accelerations = waypoints_[i]->getJointAccelerations(mdof[j]);
+
+            geometry_msgs::msg::Twist point_acceleration;
+
+            for (std::size_t k = 0; k < names.size(); ++k)
+            {
+              if (names[k].find("/trans_x") != std::string::npos)
+              {
+                point_acceleration.linear.x = accelerations[k];
+              }
+              else if (names[k].find("/trans_y") != std::string::npos)
+              {
+                point_acceleration.linear.y = accelerations[k];
+              }
+              else if (names[k].find("/trans_z") != std::string::npos)
+              {
+                point_acceleration.linear.z = accelerations[k];
+              }
+              else if (names[k].find("/rot_x") != std::string::npos)
+              {
+                point_acceleration.angular.x = accelerations[k];
+              }
+              else if (names[k].find("/rot_y") != std::string::npos)
+              {
+                point_acceleration.angular.y = accelerations[k];
+              }
+              else if (names[k].find("/rot_z") != std::string::npos)
+              {
+                point_acceleration.angular.z = accelerations[k];
+              }
+            }
+            trajectory.multi_dof_joint_trajectory.points[i].accelerations.push_back(point_acceleration);
+          }
         }
       }
       if (duration_from_previous_.size() > i)
@@ -383,6 +495,7 @@ RobotTrajectory& RobotTrajectory::setRobotTrajectoryMsg(const moveit::core::Robo
   std::size_t state_count = trajectory.points.size();
   rclcpp::Time last_time_stamp = trajectory.header.stamp;
   rclcpp::Time this_time_stamp = last_time_stamp;
+  start_time_ = last_time_stamp;
 
   for (std::size_t i = 0; i < state_count; ++i)
   {
@@ -415,6 +528,7 @@ RobotTrajectory& RobotTrajectory::setRobotTrajectoryMsg(const moveit::core::Robo
                                      trajectory.multi_dof_joint_trajectory.header.stamp :
                                      trajectory.joint_trajectory.header.stamp;
   rclcpp::Time this_time_stamp = last_time_stamp;
+  start_time_ = last_time_stamp;
 
   for (std::size_t i = 0; i < state_count; ++i)
   {

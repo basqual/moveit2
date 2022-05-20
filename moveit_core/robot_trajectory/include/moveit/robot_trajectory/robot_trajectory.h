@@ -149,6 +149,11 @@ public:
     return duration_from_previous_;
   }
 
+  const rclcpp::Time& getStartTime() const
+  {
+    return start_time_;
+  }
+
   /** @brief  Returns the duration after start that a waypoint will be reached.
    *  @param  The waypoint index.
    *  @return The duration from start; returns overall duration if index is out of range.
@@ -382,6 +387,7 @@ private:
   std::deque<moveit::core::RobotStatePtr> waypoints_;
   std::deque<double> duration_from_previous_;
   rclcpp::Clock clock_ros_;
+  rclcpp::Time start_time_;
 };
 
 /** @brief Operator overload for printing trajectory to a stream */

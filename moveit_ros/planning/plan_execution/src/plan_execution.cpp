@@ -78,7 +78,7 @@ plan_execution::PlanExecution::PlanExecution(
 {
   if (!trajectory_execution_manager_)
     trajectory_execution_manager_ = std::make_shared<trajectory_execution_manager::TrajectoryExecutionManager>(
-        node_, planning_scene_monitor_->getRobotModel(), planning_scene_monitor_->getStateMonitor());
+        node_, planning_scene_monitor_->getRobotModel(), planning_scene_monitor_);
 
   default_max_replan_attempts_ = 5;
 
@@ -391,7 +391,7 @@ moveit_msgs::msg::MoveItErrorCodes plan_execution::PlanExecution::executeAndMoni
     // convert to message, pass along
     moveit_msgs::msg::RobotTrajectory msg;
     plan.plan_components_[i].trajectory_->getRobotTrajectoryMsg(msg);
-    if (!trajectory_execution_manager_->push(msg, plan.plan_components_[i].controller_names_))
+    if (!trajectory_execution_manager_->pushToBlockingQueue(msg, plan.plan_components_[i].controller_names_))
     {
       trajectory_execution_manager_->clear();
       RCLCPP_ERROR(LOGGER, "Apparently trajectory initialization failed");
@@ -449,19 +449,19 @@ moveit_msgs::msg::MoveItErrorCodes plan_execution::PlanExecution::executeAndMoni
   if (preempt_requested)
   {
     RCLCPP_INFO(LOGGER, "Stopping execution due to preempt request");
-    trajectory_execution_manager_->stopExecution();
+    trajectory_execution_manager_->stopBlockingExecution();
   }
   else if (path_became_invalid_)
   {
     RCLCPP_INFO(LOGGER, "Stopping execution because the path to execute became invalid"
                         "(probably the environment changed)");
-    trajectory_execution_manager_->stopExecution();
+    trajectory_execution_manager_->stopBlockingExecution();
   }
   else if (!execution_complete_)
   {
     RCLCPP_WARN(LOGGER, "Stopping execution due to unknown reason."
                         "Possibly the node is about to shut down.");
-    trajectory_execution_manager_->stopExecution();
+    trajectory_execution_manager_->stopBlockingExecution();
   }
 
   // stop recording trajectory states
