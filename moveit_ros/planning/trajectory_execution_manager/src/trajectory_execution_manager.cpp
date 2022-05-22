@@ -399,7 +399,7 @@ bool TrajectoryExecutionManager::pushAndExecuteSimultaneous(const moveit_msgs::m
     context->execution_complete_callback = callback;
     context->backlog_timeout = backlog_timeout;
     context->blocking = false;
-    RCLCPP_INFO(LOGGER, "DEBUG: Backlog_timeout: %f",backlog_timeout.seconds());
+    RCLCPP_DEBUG(LOGGER, "Backlog_timeout: %f",backlog_timeout.seconds());
     {
       boost::mutex::scoped_lock slock(continuous_execution_thread_mutex_);
       RCLCPP_INFO(LOGGER,"Continuous execution thread locked");
@@ -478,7 +478,7 @@ void TrajectoryExecutionManager::continuousExecutionThread()
           continuous_execution_condition_.notify_all();
       }
 
-      RCLCPP_INFO(LOGGER, "DEBUG: Popped element with duration %lf from queue. Remaining length: %i", context->trajectory_.getDuration(),
+      RCLCPP_DEBUG(LOGGER, "Popped element with duration %lf from queue. Remaining length: %i", context->trajectory_.getDuration(),
                          continuous_execution_queue_.size());
 
       // First make sure desired controllers are active
@@ -498,8 +498,8 @@ void TrajectoryExecutionManager::continuousExecutionThread()
       for (auto backlog_context : backlog)
         if (hasCommonHandles(*backlog_context.first, *context))
         {
-          RCLCPP_INFO(LOGGER, "DEBUG: Request with duration %lf", context->trajectory_.getDuration());
-          RCLCPP_INFO(LOGGER, "DEBUG: has handles blocked by backlog items. push_back to backlog");
+          RCLCPP_DEBUG(LOGGER, "Request with duration %lf", context->trajectory_.getDuration());
+          RCLCPP_DEBUG(LOGGER, "has handles blocked by backlog items. push_back to backlog");
           backlog.push_back(std::pair<TrajectoryExecutionContext*, rclcpp::Time> (context, node_->now()));
           controllers_not_used_in_backlog = false;
           break;
@@ -507,7 +507,7 @@ void TrajectoryExecutionManager::continuousExecutionThread()
 
       if(controllers_not_used_in_backlog && !validateAndExecuteContext(*context))
       {
-        RCLCPP_INFO(LOGGER, "DEBUG: Request: %lf not executable, pushing it into backlog", context->trajectory_.getDuration());
+        RCLCPP_DEBUG(LOGGER, "Request: %lf not executable, pushing it into backlog", context->trajectory_.getDuration());
         backlog.push_back(std::pair<TrajectoryExecutionContext*, rclcpp::Time> (context, node_->now()));
       }
     }
@@ -541,25 +541,25 @@ void TrajectoryExecutionManager::checkBacklog()
 
     // Validate that the handles used in this context are not already in earlier (= higher priority) backlogged trajectories
     bool controllers_not_used_earlier_in_backlog = true;
-    RCLCPP_INFO(LOGGER, "DEBUG: Backlog evaluation of item: %f",current_context->trajectory_.getDuration());
+    RCLCPP_DEBUG(LOGGER, "Backlog evaluation of item: %f",current_context->trajectory_.getDuration());
     for (auto it2 = backlog.begin(); it2 != it; ++it2)
     {
       TrajectoryExecutionContext* priority_context = it2->first; // Previous context in the backlog (earlier ones have priority)
-      RCLCPP_INFO(LOGGER, "DEBUG: Backlog comparing item with duration: %lf" ,current_context->trajectory_.getDuration());
-      RCLCPP_INFO(LOGGER, "DEBUG: vs item with duration: %f", priority_context->trajectory_.getDuration());
+      RCLCPP_DEBUG(LOGGER, "Backlog comparing item with duration: %lf" ,current_context->trajectory_.getDuration());
+      RCLCPP_DEBUG(LOGGER, "vs item with duration: %f", priority_context->trajectory_.getDuration());
       if (hasCommonHandles(*current_context, *priority_context))
       {
         controllers_not_used_earlier_in_backlog = false;
-        RCLCPP_INFO(LOGGER, "DEBUG: Backlog item has handles blocked by previous items");
+        RCLCPP_DEBUG(LOGGER, "Backlog item has handles blocked by previous items");
         break;
       }
     }
     if(controllers_not_used_earlier_in_backlog)
     {
-      RCLCPP_INFO(LOGGER, "DEBUG: Backlog item with duration %lf will be checked and pushed to controller.", current_context->trajectory_.getDuration());
+      RCLCPP_DEBUG(LOGGER, "Backlog item with duration %lf will be checked and pushed to controller.", current_context->trajectory_.getDuration());
       if(validateAndExecuteContext(*current_context))
       {
-        RCLCPP_INFO(LOGGER, "DEBUG: Backlog item with duration %lf has been executed correctly.", current_context->trajectory_.getDuration() );
+        RCLCPP_DEBUG(LOGGER, "Backlog item with duration %lf has been executed correctly.", current_context->trajectory_.getDuration() );
         it = backlog.erase(it);
       }
       else if (it == backlog.begin() && active_contexts_.empty())
@@ -571,7 +571,7 @@ void TrajectoryExecutionManager::checkBacklog()
       }
       else
       {
-        RCLCPP_INFO(LOGGER, "DEBUG: Backlog item with duration %lf is still not executable", current_context->trajectory_.getDuration());
+        RCLCPP_DEBUG(LOGGER, "Backlog item with duration %lf is still not executable", current_context->trajectory_.getDuration());
         it++;
       }
     }
@@ -1479,11 +1479,8 @@ void TrajectoryExecutionManager::executePart(TrajectoryExecutionContext* context
                         "Controller is taking too long to execute trajectory (the expected upper "
                         "bound for the trajectory execution was %lf seconds). Stopping trajectory.",
                         expected_trajectory_duration.seconds());
-            {
-              //TODO
-              boost::mutex::scoped_lock slock(blocking_execution_state_mutex_);
-              stopExecutionInternal();  // this is really tricky. we can't call stopBlockingExecution() here, so we call the
-                                        // internal function only
+            stopExecutionInternal();  // this is really tricky. we can't call stopBlockingExecution() here, so we call the
+                                      // internal function only
             }
             context->last_execution_status_ = moveit_controller_manager::ExecutionStatus::TIMED_OUT;
             break;
@@ -1777,59 +1774,60 @@ void TrajectoryExecutionManager::loadControllerParams()
 bool TrajectoryExecutionManager::checkCollisionBetweenTrajectories(const robot_trajectory::RobotTrajectory& new_trajectory,
                                                                    const TrajectoryExecutionContext* context)
 {
-  for(TrajectoryPart* part : context->trajectory_parts_){
-    robot_trajectory::RobotTrajectory active_trajectory = context->trajectory_;
+  robot_trajectory::RobotTrajectory active_trajectory = context->trajectory_;
 
-    RCLCPP_INFO(LOGGER, "DEBUG: Start checkCollision between trajectories");
-    planning_scene_monitor::LockedPlanningSceneRO ps(planning_scene_monitor_);
+  RCLCPP_DEBUG(LOGGER, "Start checkCollision between trajectories");
+  planning_scene_monitor::LockedPlanningSceneRO ps(planning_scene_monitor_);
+  const collision_detection::AllowedCollisionMatrix acm = ps->getAllowedCollisionMatrix();
 
-    int before = -1;
-    int after = -2;
-    double blend;
-    std::vector<int> actuatedJoints;
-    for(std::string joint : part->actuated_joints){
-          actuatedJoints.push_back(robot_model_->getVariableIndex(joint));
-    }
-    
-    auto timeBefore = node_->now();
-    double duration = (node_->now() - context->start_time).seconds();
+  collision_detection::CollisionRequest req;
+  collision_detection::CollisionResult res;
 
-    double* positionsOld;
-    moveit::core::RobotState stateInterpol(robot_model_);
+  int before;
+  int after;
+  double blend;
+  
+  auto timeBefore = node_->now();
+  double duration = (node_->now() - context->start_time).seconds();
 
-    const robot_trajectory::RobotTrajectory* shortTrajectory = nullptr; 
-    const robot_trajectory::RobotTrajectory* longTrajectory = nullptr; 
-    int i = 0;
-    if(context->getEstimatedIndex(node_->now()) - active_trajectory.getWayPointCount() > new_trajectory.getWayPointCount()){
-        shortTrajectory = &new_trajectory;
-        longTrajectory = &active_trajectory;
-        i = context->getEstimatedIndex(node_->now());
-    }else{
-      shortTrajectory = &active_trajectory;
-      longTrajectory = &new_trajectory;
-    }
+  double* positionsOld;
+  moveit::core::RobotState stateInterpol(robot_model_);
 
-    double* positionsShort;
-    
-    for(; i < longTrajectory->getWayPointCount();i++){
-      const double* positionsLong = longTrajectory->getWayPoint(i).getVariablePositions();
-      if(before != after){
-          shortTrajectory->findWayPointIndicesForDurationAfterStart(duration  + longTrajectory->getWayPointDurationFromStart(i),before,after,blend);
-          shortTrajectory->getWayPoint(before).interpolate(shortTrajectory->getWayPoint(after),blend,stateInterpol);
-          positionsShort = stateInterpol.getVariablePositions();
-      }
-      //Add all State positions into a single state
-      for(int& joint:actuatedJoints) positionsShort[joint] = positionsLong[joint];
-      //Force update the State as we have changed internal variables
-      stateInterpol.update(true);
-      //Check if the calculated state is valid
-      if(!ps->isStateValid(stateInterpol)){
-          RCLCPP_INFO(LOGGER,"DEBUG: Collision Detected");
-          return false;
-      }
+  const robot_trajectory::RobotTrajectory* shortTrajectory = nullptr; 
+  const robot_trajectory::RobotTrajectory* longTrajectory = nullptr; 
+  
+  int i = 0;
+
+  if(context->getEstimatedIndex(node_->now()) - active_trajectory.getWayPointCount() > new_trajectory.getWayPointCount()){
+      shortTrajectory = &new_trajectory;
+      longTrajectory = &active_trajectory;
+      i = context->getEstimatedIndex(node_->now());
+  }else{
+    shortTrajectory = &active_trajectory;
+    longTrajectory = &new_trajectory;
+  }
+
+
+  for(; i < longTrajectory->getWayPointCount();i++){
+    const double* positionsLong = longTrajectory->getWayPoint(i).getVariablePositions();
+
+    shortTrajectory->findWayPointIndicesForDurationAfterStart(duration  + longTrajectory->getWayPointDurationFromStart(i),before,after,blend);
+    shortTrajectory->getWayPoint(before).interpolate(shortTrajectory->getWayPoint(after),blend,stateInterpol);
+    double* positionsShort = stateInterpol.getVariablePositions();
+
+    //Add all State positions into a single state
+    for(auto joint : context->actuated_joint_indexes) positionsShort[joint] = positionsLong[joint];
+    //Force update the State as we have changed internal variables
+    stateInterpol.update(true);
+    //Check if the calculated state is valid
+    res.clear();
+    ps->checkCollision(req, res, stateInterpol, acm);
+    if(res.collision){
+        RCLCPP_DEBUG(LOGGER,"Collision Detected");
+        return false;
     }
   }
-  RCLCPP_INFO(LOGGER, "DEBUG: Finished Collision Checking");
+  RCLCPP_DEBUG(LOGGER, "Finished Collision Checking");
   return true;
 }
 
@@ -1851,7 +1849,7 @@ bool TrajectoryExecutionManager::checkContextForCollisions(TrajectoryExecutionCo
     if (!checkCollisionBetweenTrajectories(context.trajectory_, currently_running_context))
     {
       // Push to backlog
-      RCLCPP_INFO(LOGGER, "DEBUG: Collision found between trajectory with duration: %lf and trajectory with duration: %lf" ,context.trajectory_.getDuration(),
+      RCLCPP_DEBUG(LOGGER, "Collision found between trajectory with duration: %lf and trajectory with duration: %lf" ,context.trajectory_.getDuration(),
                                 currently_running_context->trajectory_.getDuration());
       active_contexts_mutex_.unlock();
       return false;
@@ -1866,7 +1864,7 @@ bool TrajectoryExecutionManager::checkCollisionsWithCurrentState(moveit_msgs::ms
   moveit::core::RobotStatePtr current_state;
   if (!csm_->waitForCurrentState(node_->now()) || !(current_state = csm_->getCurrentState()))
   {
-    RCLCPP_INFO(LOGGER, "DEBUG: Failed to validate trajectory: couldn't receive full current joint state within 1s");
+    RCLCPP_DEBUG(LOGGER, "Failed to validate trajectory: couldn't receive full current joint state within 1s");
     return false;
   }
   planning_scene_monitor::LockedPlanningSceneRO ps(planning_scene_monitor_);
@@ -1876,7 +1874,7 @@ bool TrajectoryExecutionManager::checkCollisionsWithCurrentState(moveit_msgs::ms
     robotStateToRobotStateMsg(*current_state, robot_state_msg);
     if(!ps->isPathValid(robot_state_msg, trajectory, trajectory.group_name))
        {
-      RCLCPP_INFO(LOGGER, "DEBUG: New trajectory collides with the current robot state. Abort!");
+      RCLCPP_DEBUG(LOGGER, "New trajectory collides with the current robot state. Abort!");
       //last_execution_status_continuous_ = moveit_controller_manager::ExecutionStatus::ABORTED;
       return false;
     }
@@ -1912,7 +1910,7 @@ void TrajectoryExecutionManager::getContextHandles(TrajectoryExecutionContext& c
 
 bool TrajectoryExecutionManager::validateAndExecuteContext(TrajectoryExecutionContext& context)
 {
-  RCLCPP_INFO(LOGGER, "DEBUG: Start validateAndExecuteContext");
+  RCLCPP_DEBUG(LOGGER, "Start validateAndExecuteContext");
 
   // Get the controller handles needed to execute the new trajectory
   std::vector<moveit_controller_manager::MoveItControllerHandlePtr> handles(context.controllers_.size());
@@ -1930,11 +1928,11 @@ bool TrajectoryExecutionManager::validateAndExecuteContext(TrajectoryExecutionCo
   }
 
 
-  RCLCPP_INFO(LOGGER, "DEBUG: DEBUG: Printing necessary handles for new traj");
+  RCLCPP_DEBUG(LOGGER, "DEBUG: Printing necessary handles for new traj");
   for (std::size_t i = 0; i < context.trajectory_parts_.size(); ++i)
   {
     RCLCPP_DEBUG_STREAM(LOGGER, "handle: " << (i+1) << " of " << context.trajectory_parts_.size() << " : " << handles[i]->getName());
-    RCLCPP_INFO(LOGGER, "DEBUG: Next-up trajectory has duration %lf", context.trajectory_.getDuration());
+    RCLCPP_DEBUG(LOGGER, "Next-up trajectory has duration %lf", context.trajectory_.getDuration());
   }
   
     // Check whether this trajectory starts at current robot state
@@ -1965,7 +1963,7 @@ bool TrajectoryExecutionManager::validateAndExecuteContext(TrajectoryExecutionCo
   context.trajectory_.getRobotTrajectoryMsg(trajectory);
   if (!checkCollisionsWithCurrentState(trajectory))
   {
-    RCLCPP_INFO(LOGGER, "DEBUG: Trajectory collides with current state. Cannot execute yet.");
+    RCLCPP_DEBUG(LOGGER, "Trajectory collides with current state. Cannot execute yet.");
     return false;
   }
 
@@ -1979,14 +1977,18 @@ bool TrajectoryExecutionManager::validateAndExecuteContext(TrajectoryExecutionCo
     bool execution_complete_ = false;
     executePart(&context,execution_complete_);
 
-    //Check backlog for trajectories that can be executed again
-    checkBacklog();
+    // Wait for the robot to stop moving
+    waitForRobotToStop(context);
 
     //set the global execution status
     last_execution_status_continuous_ = context.last_execution_status_;
     RCLCPP_INFO(LOGGER, "Executed simultanous trajectory with status %s ...", last_execution_status_continuous_.asString().c_str());
     
     context.execution_complete_callback(last_execution_status_continuous_);
+
+    //Check backlog for trajectories that can be executed again
+    checkBacklog();
+
   }).detach();
 
   return true;
@@ -1998,24 +2000,20 @@ bool TrajectoryExecutionManager::hasCommonHandles(TrajectoryExecutionContext& co
   std::vector<moveit_controller_manager::MoveItControllerHandlePtr> ctx2_handles(context2.controllers_.size());
   getContextHandles(context1, ctx1_handles);
   getContextHandles(context2, ctx2_handles);
-  // TODO (cambel): surely there is a better way to compare these 2 vectors...
-  for (auto ch : ctx2_handles)
-    for (auto ph : ctx1_handles)
-      if (ch == ph)
-        return true;
-  return false;
+  // Compare the two vectors to see if they have common objects
+  return std::find_first_of(ctx1_handles.begin(), ctx1_handles.end(),ctx2_handles.begin(), ctx2_handles.end()) != ctx1_handles.end();
 }
 
+//TODO: Is this needed for real robots? In sim, it doesn't do anything...
 void TrajectoryExecutionManager::updateTimestamps(TrajectoryExecutionContext& context)
 {
   moveit::core::RobotStatePtr real_state = csm_->getCurrentState();
 
-  for(TrajectoryPart* part : context.trajectory_parts_){
   robot_trajectory::RobotTrajectory currently_running_trajectory = context.trajectory_;
 
   //Get the duration of the running trajectory
   double durationFromStart = (node_->now() - context.start_time).seconds();
-  RCLCPP_INFO(LOGGER, "DEBUG: Duration from Start: %f",durationFromStart);
+  RCLCPP_DEBUG(LOGGER, "Duration from Start: %f",durationFromStart);
 
   //Get the states inbetween which we should currently be based 
   //on our estimated time
@@ -2026,43 +2024,36 @@ void TrajectoryExecutionManager::updateTimestamps(TrajectoryExecutionContext& co
   auto state_before = currently_running_trajectory.getWayPoint(before);
   auto state_after = currently_running_trajectory.getWayPoint(after);
 
+  //Get the interpolated state that is the closest to the current state
+  // and compare the timestamp of that state to the real timestamp
+  const double* positionsA = state_before.getVariablePositions();
+  const double* positionsB = state_after.getVariablePositions();
+  const double* positionsReal = real_state->getVariablePositions();
   
-    //Get joints used in the trajectory
-    //TODO: Can there ever be no group?
-    std::vector<int> actuatedJoints;
-    for(std::string joint : part->actuated_joints){
-          actuatedJoints.push_back(robot_model_->getVariableIndex(joint));
-    }
-    //Get the interpolated state that is the closest to the current state
-    // and compare the timestamp of that state to the real timestamp
-    const double* positionsA = state_before.getVariablePositions();
-    const double* positionsB = state_after.getVariablePositions();
-    const double* positionsReal = real_state->getVariablePositions();
-    
-    double lengthSqrAB = 0;
-    double t = 0;
+  double lengthSqrAB = 0;
+  double t = 0;
 
-    for(int j : actuatedJoints){
-      double diffAB = positionsB[j] - positionsA[j];
-      double diffAReal = positionsReal[j] - positionsA[j];
-      lengthSqrAB += pow(diffAB,2);
-      t += diffAB*diffAReal;
-    }
-    double realBlend = t/lengthSqrAB;
-
-    //Calculate the difference between real and estimated timestamp
-    double time_diff = currently_running_trajectory.getWayPointDurationFromPrevious(after) * (realBlend - blend);
-
-    RCLCPP_INFO(LOGGER, "DEBUG: Time difference (estimated/real) (Abs): %f",time_diff);
-    RCLCPP_INFO(LOGGER, "DEBUG: index: %i",before);
-    RCLCPP_INFO(LOGGER, "DEBUG: Before adjusting: %f",currently_running_trajectory.getWayPointDurationFromPrevious(after));
-    //Adjust this timestamp with the calculated corretcion
-    currently_running_trajectory.setWayPointDurationFromPrevious(after,currently_running_trajectory.getWayPointDurationFromPrevious(after) + time_diff);
-    RCLCPP_INFO(LOGGER, "DEBUG: After adjusting: %f",currently_running_trajectory.getWayPointDurationFromPrevious(after));
-
+  for(auto j : context->actuated_joint_indexes){
+    double diffAB = positionsB[j] - positionsA[j];
+    double diffAReal = positionsReal[j] - positionsA[j];
+    lengthSqrAB += pow(diffAB,2);
+    t += diffAB*diffAReal;
   }
+  double realBlend = t/lengthSqrAB;
+
+  //Calculate the difference between real and estimated timestamp
+  double time_diff = currently_running_trajectory.getWayPointDurationFromPrevious(after) * (realBlend - blend);
+
+  RCLCPP_DEBUG(LOGGER, "Time difference (estimated/real) (Abs): %f",time_diff);
+  RCLCPP_DEBUG(LOGGER, "index: %i",before);
+  RCLCPP_DEBUG(LOGGER, "Before adjusting: %f",currently_running_trajectory.getWayPointDurationFromPrevious(after));
+  //Adjust this timestamp with the calculated corretcion
+  currently_running_trajectory.setWayPointDurationFromPrevious(after,currently_running_trajectory.getWayPointDurationFromPrevious(after) + time_diff);
+  RCLCPP_DEBUG(LOGGER, "After adjusting: %f",currently_running_trajectory.getWayPointDurationFromPrevious(after));
+
 }
 
+//Not in use anymore, i'll leave it here if someone wants to utilize it
 bool TrajectoryExecutionManager::isRemainingPathValid(TrajectoryExecutionContext& context)
 {
   planning_scene_monitor::LockedPlanningSceneRO ps(planning_scene_monitor_);
@@ -2088,7 +2079,7 @@ bool TrajectoryExecutionManager::isRemainingPathValid(TrajectoryExecutionContext
 
 bool TrajectoryExecutionManager::checkAllRemainingPaths()
 {
-  RCLCPP_INFO(LOGGER, "DEBUG: Start checking all trajectories");
+  RCLCPP_DEBUG(LOGGER, "Start checking all trajectories");
   planning_scene_monitor::LockedPlanningSceneRO ps(planning_scene_monitor_);
   const collision_detection::AllowedCollisionMatrix acm = ps->getAllowedCollisionMatrix();
 
@@ -2097,20 +2088,25 @@ bool TrajectoryExecutionManager::checkAllRemainingPaths()
 
   if(!active_contexts_.empty()){
     collision_detection::CollisionRequest req;
+    collision_detection::CollisionResult res;
 
-    for(int j = 0; j < 5; j++){
-      rclcpp::Time timeStamp =node_->now() + rclcpp::Duration::from_seconds(0.1*j);
+    for(int j = 0; j < 10; j++){
+      rclcpp::Time timeStamp =node_->now() + rclcpp::Duration::from_seconds( 0.1 * j );
       for (int i = 0; i < active_contexts_.size(); i++)
       {
-        int trajectory_index = active_contexts_[i]->getEstimatedIndex(timeStamp);
-        const double* positionsTrajectory = active_contexts_[i]->trajectory_.getWayPoint(trajectory_index).getVariablePositions();
+        // Get indexes for before and after the timestep and interpolate those values
+        int before, after;double blend;
+        active_contexts_[i]->trajectory_.findWayPointIndicesForDurationAfterStart((timeStamp - active_contexts_[i]->start_time).seconds(),before,after,blend);
+        const double* positionsBefore = active_contexts_[i]->trajectory_.getWayPoint(before).getVariablePositions();
+        const double* positionsAfter = active_contexts_[i]->trajectory_.getWayPoint(after).getVariablePositions();
+
         for(uint8_t& joint_idx :  active_contexts_[i]->actuated_joint_indexes){
-          positions[joint_idx] = positionsTrajectory[joint_idx];
+          positions[joint_idx] = positionsBefore[joint_idx] + blend*(positionsAfter[joint_idx] - positionsBefore[joint_idx]);
         }
       }
       combinedState.update(true);
 
-      collision_detection::CollisionResult res;
+      res.clear();
       ps->checkCollision(req, res, combinedState, acm);
 
       if (res.collision)
@@ -2123,20 +2119,29 @@ bool TrajectoryExecutionManager::checkAllRemainingPaths()
         // Check all possible permutations of the contexts to get the colliding contexts
         // This is done in two steps to reduce overhead
         do {
-          //combinedState.positions = 0;
+          //Set the positions to zero
+          ---
+          for(int y = 0;y < robot_model_->getVariableCount();y ++ )
+            positions[y] = 0;
+          
+          // Go over it one more time, bitmask[i] ensures the combination of every context
           for (int i = 0; i < active_contexts_.size(); i++)
           {
             if (bitmask[i]) {
-              int trajectory_index = active_contexts_[i]->getEstimatedIndex(timeStamp);
-              const double* positionsTrajectory = active_contexts_[i]->trajectory_.getWayPoint(trajectory_index).getVariablePositions();
+              // Get indexes for before and after the timestep and interpolate those values
+              int before, after;double blend;
+              active_contexts_[i]->trajectory_.findWayPointIndicesForDurationAfterStart((timeStamp - active_contexts_[i]->start_time).seconds(),before,after,blend);
+              const double* positionsBefore = active_contexts_[i]->trajectory_.getWayPoint(before).getVariablePositions();
+              const double* positionsAfter = active_contexts_[i]->trajectory_.getWayPoint(after).getVariablePositions();
+
               for(uint8_t& joint_idx :  active_contexts_[i]->actuated_joint_indexes){
-                positions[joint_idx] = positionsTrajectory[joint_idx];
+                positions[joint_idx] = positionsBefore[joint_idx] + blend*(positionsAfter[joint_idx] - positionsBefore[joint_idx]);
               }
             }
           }
           combinedState.update(true);
 
-          collision_detection::CollisionResult res;
+          res.clear();
           ps->checkCollision(req, res, combinedState, acm);
           if (res.collision)
           {          
