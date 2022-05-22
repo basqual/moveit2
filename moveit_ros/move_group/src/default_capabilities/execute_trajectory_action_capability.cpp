@@ -82,7 +82,8 @@ void MoveGroupExecuteTrajectoryAction::executePathCallback(std::shared_ptr<ExecT
     goal->abort(action_res);
     return;
   }
-  if (context_->trajectory_execution_manager_->pushAndExecuteSimultaneous(goal->get_goal()->trajectory, "", std::bind(&MoveGroupExecuteTrajectoryAction::completedTrajectoryCallback,this,std::placeholders::_1,goal),goal->get_goal()->backlog_timeout))
+  
+  if (context_->trajectory_execution_manager_->pushAndExecuteSimultaneous(goal->get_goal()->trajectory, "", [this,goal](const moveit_controller_manager::ExecutionStatus& status){completedTrajectoryCallback(status,goal);} ,goal->get_goal()->backlog_timeout))
   {
     setExecuteTrajectoryState(MONITOR, goal);
     RCLCPP_DEBUG_STREAM(LOGGER, "Pushed trajectory to queue.");
@@ -94,6 +95,10 @@ void MoveGroupExecuteTrajectoryAction::executePathCallback(std::shared_ptr<ExecT
     const std::string response = getActionResultString(action_res->error_code, false, false);
     goal->abort(action_res);
   }
+}
+void MoveGroupExecuteTrajectoryAction::preemptExecuteTrajectoryCallback()
+{
+  context_->trajectory_execution_manager_->stopContinuousExecution();
 }
 
 void MoveGroupExecuteTrajectoryAction::completedTrajectoryCallback(const moveit_controller_manager::ExecutionStatus& status,std::shared_ptr<ExecTrajectoryGoal> goal)

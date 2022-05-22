@@ -308,9 +308,10 @@ bool TrajectoryExecutionManager::pushToBlockingQueue(const moveit_msgs::msg::Rob
     RCLCPP_ERROR(LOGGER, "Cannot pushToBlockingQueue a new trajectory while another is being executed");
     return false;
   }
-  TrajectoryExecutionContext* context = configure(trajectory, controllers,true);
-  if (context)
+  TrajectoryExecutionContext* context = nullptr;
+  if (configure(&context,trajectory, controllers))
   {
+    context->blocking = true;
     if (verbose_)
     {
       std::stringstream ss;
@@ -337,45 +338,45 @@ bool TrajectoryExecutionManager::pushToBlockingQueue(const moveit_msgs::msg::Rob
 
 bool TrajectoryExecutionManager::pushAndExecuteSimultaneous(const moveit_msgs::msg::RobotTrajectory& trajectory,
                                                 const std::string& controller, const ExecutionCompleteCallback& callback,
-                                                const rclcpp::Duration& backlog_timeout_)
+                                                const rclcpp::Duration& backlog_timeout)
 {
   if (controller.empty())
-    return pushAndExecuteSimultaneous(trajectory, std::vector<std::string>(), callback,backlog_timeout_);
+    return pushAndExecuteSimultaneous(trajectory, std::vector<std::string>(), callback,backlog_timeout);
   else
-    return pushAndExecuteSimultaneous(trajectory, std::vector<std::string>(1, controller), callback,backlog_timeout_);
+    return pushAndExecuteSimultaneous(trajectory, std::vector<std::string>(1, controller), callback,backlog_timeout);
 }
 
 bool TrajectoryExecutionManager::pushAndExecuteSimultaneous(const trajectory_msgs::msg::JointTrajectory& trajectory,
                                                 const std::string& controller, const ExecutionCompleteCallback& callback,
-                                                const rclcpp::Duration& backlog_timeout_)
+                                                const rclcpp::Duration& backlog_timeout)
 {
   if (controller.empty())
-    return pushAndExecuteSimultaneous(trajectory, std::vector<std::string>(), callback,backlog_timeout_);
+    return pushAndExecuteSimultaneous(trajectory, std::vector<std::string>(), callback,backlog_timeout);
   else
-    return pushAndExecuteSimultaneous(trajectory, std::vector<std::string>(1, controller), callback,backlog_timeout_);
+    return pushAndExecuteSimultaneous(trajectory, std::vector<std::string>(1, controller), callback,backlog_timeout);
 }
 
 bool TrajectoryExecutionManager::pushAndExecuteSimultaneous(const sensor_msgs::msg::JointState& state, const std::string& controller, const ExecutionCompleteCallback& callback,
-                                                            const rclcpp::Duration& backlog_timeout_)
+                                                            const rclcpp::Duration& backlog_timeout)
 {
   if (controller.empty())
-    return pushAndExecuteSimultaneous(state, std::vector<std::string>(), callback,backlog_timeout_);
+    return pushAndExecuteSimultaneous(state, std::vector<std::string>(), callback,backlog_timeout);
   else
-    return pushAndExecuteSimultaneous(state, std::vector<std::string>(1, controller), callback,backlog_timeout_);
+    return pushAndExecuteSimultaneous(state, std::vector<std::string>(1, controller), callback,backlog_timeout);
 }
 
 bool TrajectoryExecutionManager::pushAndExecuteSimultaneous(const trajectory_msgs::msg::JointTrajectory& trajectory,
                                                 const std::vector<std::string>& controllers, const ExecutionCompleteCallback& callback,
-                                                const rclcpp::Duration& backlog_timeout_)
+                                                const rclcpp::Duration& backlog_timeout)
 {
   moveit_msgs::msg::RobotTrajectory traj;
   traj.joint_trajectory = trajectory;
-  return pushAndExecuteSimultaneous(traj, controllers, callback,backlog_timeout_);
+  return pushAndExecuteSimultaneous(traj, controllers, callback,backlog_timeout);
 }
 
 bool TrajectoryExecutionManager::pushAndExecuteSimultaneous(const sensor_msgs::msg::JointState& state,
                                                 const std::vector<std::string>& controllers, const ExecutionCompleteCallback& callback,
-                                                const rclcpp::Duration& backlog_timeout_)
+                                                const rclcpp::Duration& backlog_timeout)
 {
   moveit_msgs::msg::RobotTrajectory traj;
   traj.joint_trajectory.header = state.header;
@@ -385,17 +386,20 @@ bool TrajectoryExecutionManager::pushAndExecuteSimultaneous(const sensor_msgs::m
   traj.joint_trajectory.points[0].velocities = state.velocity;
   traj.joint_trajectory.points[0].effort = state.effort;
   traj.joint_trajectory.points[0].time_from_start = rclcpp::Duration(0, 0);
-  return pushAndExecuteSimultaneous(traj, controllers, callback,backlog_timeout_);
+  return pushAndExecuteSimultaneous(traj, controllers, callback,backlog_timeout);
 }
 
 bool TrajectoryExecutionManager::pushAndExecuteSimultaneous(const moveit_msgs::msg::RobotTrajectory& trajectory,
                                                 const std::vector<std::string>& controllers, const ExecutionCompleteCallback& callback,
-                                                const rclcpp::Duration& backlog_timeout_)
+                                                const rclcpp::Duration& backlog_timeout)
 {
-  TrajectoryExecutionContext* context = configure(trajectory, controllers,false,backlog_timeout_);
-  if (context)
+  TrajectoryExecutionContext* context = nullptr;
+  if (configure(&context,trajectory, controllers))
   {
     context->execution_complete_callback = callback;
+    context->backlog_timeout = backlog_timeout;
+    context->blocking = false;
+    RCLCPP_INFO(LOGGER, "DEBUG: Backlog_timeout: %f",backlog_timeout.seconds());
     {
       boost::mutex::scoped_lock slock(continuous_execution_thread_mutex_);
       RCLCPP_INFO(LOGGER,"Continuous execution thread locked");
@@ -411,42 +415,31 @@ bool TrajectoryExecutionManager::pushAndExecuteSimultaneous(const moveit_msgs::m
   else
   {
     delete context;
-    //last_execution_status_ = moveit_controller_manager::ExecutionStatus::ABORTED;
     return false;
   }
 }
 
 void TrajectoryExecutionManager::continuousExecutionThread()
 {
-  //std::set<moveit_controller_manager::MoveItControllerHandlePtr> used_handles;
-
-  //std::map<TrajectoryExecutionContext*, std::set<moveit_controller_manager::MoveItControllerHandlePtr>> active_contexts_map;  // The list of trajectories currently being executed, and their controller handles
-
-  rclcpp::Rate r(5);
+  rclcpp::Rate r(10);
   while(run_continuous_execution_thread_)
-  {
-    // RCLCPP_INFO(LOGGER, "DEBUG: ===========Loop top-most entry================");
-    
-    if (!stop_continuous_execution_ && active_contexts_.size()>0)
+  {    
+    if (!stop_continuous_execution_ && ( !active_contexts_.empty() || !backlog.empty()) && continuous_execution_queue_.empty())
     {
-      for (auto& context : active_contexts_)
-      {
-        if(!context->blocking){
-          if(!isRemainingPathValid(*context)){
+      if(!checkAllRemainingPaths()){
             RCLCPP_ERROR(LOGGER,"Path is not valid anymore");
 
-          }
-        }
       }
       RCLCPP_INFO(LOGGER,"Running main Thread");
       checkBacklogExpiration();
       r.sleep();
-    }else if (active_contexts_.size() == 0){
-      boost::unique_lock<boost::mutex> ulock(continuous_execution_thread_mutex_);
-      while (continuous_execution_queue_.empty() && run_continuous_execution_thread_ && !stop_continuous_execution_)
-        continuous_execution_condition_.wait(ulock);
     }
-    
+    /*
+    else if (active_contexts_.empty() && backlog.empty()){
+      boost::unique_lock<boost::mutex> ulock(continuous_execution_thread_mutex_);
+      while (continuous_execution_queue_.empty() && active_contexts_.empty() && run_continuous_execution_thread_ && !stop_continuous_execution_)
+        continuous_execution_condition_.wait(ulock);
+    }*/
     
     // If stop-flag is set, break out
     if (stop_continuous_execution_ || !run_continuous_execution_thread_)
@@ -473,7 +466,6 @@ void TrajectoryExecutionManager::continuousExecutionThread()
     while (!continuous_execution_queue_.empty())
     {
       // Get next trajectory context from queue
-      RCLCPP_INFO(LOGGER, "Queue Size: %i",continuous_execution_queue_.size());
       RCLCPP_DEBUG(LOGGER, "Queue Size: %i",continuous_execution_queue_.size());
       TrajectoryExecutionContext* context = nullptr;
       {
@@ -486,7 +478,6 @@ void TrajectoryExecutionManager::continuousExecutionThread()
           continuous_execution_condition_.notify_all();
       }
 
-      RCLCPP_INFO(LOGGER, "DEBUG: ==========");
       RCLCPP_INFO(LOGGER, "DEBUG: Popped element with duration %lf from queue. Remaining length: %i", context->trajectory_.getDuration(),
                          continuous_execution_queue_.size());
 
@@ -529,9 +520,9 @@ void TrajectoryExecutionManager::checkBacklogExpiration()
     TrajectoryExecutionContext* current_context = it->first;
     rclcpp::Time& created_at = it->second;
     // Remove backlog items that have expired 
-    if (created_at +  current_context->backlog_timeout_ < node_->now())
+    if (created_at +  current_context->backlog_timeout < node_->now())
     {
-      RCLCPP_WARN(LOGGER, "Backlog item with duration %f has expired (Timeout: %f). Removing from backlog.", current_context->trajectory_.getDuration(),current_context->backlog_timeout_.seconds());
+      RCLCPP_WARN(LOGGER, "Backlog item with duration %f has expired (Timeout: %f). Removing from backlog.", current_context->trajectory_.getDuration(),current_context->backlog_timeout.seconds());
       current_context->execution_complete_callback(moveit_controller_manager::ExecutionStatus::TIMED_OUT);
       it = backlog.erase(it);
       continue;
@@ -890,10 +881,13 @@ bool TrajectoryExecutionManager::selectControllers(const std::set<std::string>& 
   return false;
 }
 
-bool TrajectoryExecutionManager::distributeTrajectory(robot_trajectory::RobotTrajectory& robotTraj,
-                                                      const std::vector<std::string>& controllers,
-                                                      std::vector<TrajectoryPart*>& parts)
+bool TrajectoryExecutionManager::distributeTrajectory(TrajectoryExecutionContext* context)
 {
+
+  robot_trajectory::RobotTrajectory& robotTraj = context->trajectory_;
+  const std::vector<std::string>& controllers = context->controllers_;
+  std::vector<TrajectoryPart*>& parts = context->trajectory_parts_;
+
   parts.clear();
 
   auto group_ = robotTraj.getGroup();
@@ -915,6 +909,8 @@ bool TrajectoryExecutionManager::distributeTrajectory(robot_trajectory::RobotTra
     {
       actuated_joints_mdof.insert(active_joint->getName());
     }
+    // Store the indexes of the joints for later use in trajectory checking
+    context->actuated_joint_indexes.push_back(robot_model_->getVariableIndex(active_joint->getName()));
   }
 
   for (std::size_t i = 0; i < controllers.size(); ++i)
@@ -1068,29 +1064,25 @@ bool TrajectoryExecutionManager::validate(const TrajectoryExecutionContext& cont
   return true;
 }
 
-TrajectoryExecutionManager::TrajectoryExecutionContext* TrajectoryExecutionManager::configure(const moveit_msgs::msg::RobotTrajectory& trajectory,const std::vector<std::string>& controllers,
-                                                                                              bool blocking,const rclcpp::Duration& backlog_timeout_)
+bool TrajectoryExecutionManager::configure(TrajectoryExecutionContext** context,
+                                          const moveit_msgs::msg::RobotTrajectory& trajectory,
+                                          const std::vector<std::string>& controllers)
 {  
-  planning_scene_monitor::LockedPlanningSceneRO ps(planning_scene_monitor_);
-  moveit::core::RobotState start_state = ps->getCurrentState();
-  auto robotTraj = robot_trajectory::RobotTrajectory(robot_model_,trajectory.group_name).setRobotTrajectoryMsg(start_state,trajectory);
+  auto robotTraj = robot_trajectory::RobotTrajectory(robot_model_,trajectory.group_name).setRobotTrajectoryMsg(*(csm_->getCurrentState()),trajectory);
+  //Do we even need to unwind?
+  robotTraj.unwind(*(csm_->getCurrentState()));
 
-  //Calculate estimated timestamps for trajectory
-  //trajectory_processing::IterativeSplineParameterization(true).computeTimeStamps(robotTraj);
+  *context = new TrajectoryExecutionContext(robotTraj);
 
-  robotTraj.unwind(start_state);
-
-  TrajectoryExecutionContext* context = new TrajectoryExecutionContext(robotTraj,blocking);
-  context->backlog_timeout_ = backlog_timeout_;
-
-  if (trajectory.multi_dof_joint_trajectory.points.empty() && trajectory.joint_trajectory.points.empty())
+  if (robotTraj.getWayPointCount() == 0)
   {
     // empty trajectories don't need to configure anything
-    return context;
+    return true;
   }
 
   std::set<std::string> actuated_joints;
 
+  //TODO: Use robot_trajectory here too
   auto is_actuated = [this](const std::string& joint_name) -> bool {
     const moveit::core::JointModel* jm = robot_model_->getJointModel(joint_name);
     return (jm && !jm->isPassive() && !jm->getMimic() && jm->getType() != moveit::core::JointModel::FIXED);
@@ -1105,7 +1097,7 @@ TrajectoryExecutionManager::TrajectoryExecutionContext* TrajectoryExecutionManag
   if (actuated_joints.empty())
   {
     RCLCPP_WARN(LOGGER, "The trajectory to execute specifies no joints");
-    return nullptr;
+    return false;
   }
 
   if (controllers.empty())
@@ -1119,10 +1111,10 @@ TrajectoryExecutionManager::TrajectoryExecutionContext* TrajectoryExecutionManag
       for (std::map<std::string, ControllerInformation>::const_iterator it = known_controllers_.begin();
            it != known_controllers_.end(); ++it)
         all_controller_names.push_back(it->first);
-      if (selectControllers(actuated_joints, all_controller_names, context->controllers_))
+      if (selectControllers(actuated_joints, all_controller_names, (*context)->controllers_))
       {
-        if (distributeTrajectory(robotTraj, context->controllers_, context->trajectory_parts_))
-          return context;
+        if (distributeTrajectory(*context))
+          return true;
       }
       else
       {
@@ -1153,12 +1145,12 @@ TrajectoryExecutionManager::TrajectoryExecutionContext* TrajectoryExecutionManag
         if (known_controllers_.find(controller) == known_controllers_.end())
         {
           RCLCPP_ERROR(LOGGER, "Controller '%s' is not known", controller.c_str());
-          return nullptr;
+          return false;
         }
-    if (selectControllers(actuated_joints, controllers, context->controllers_))
+    if (selectControllers(actuated_joints, controllers, (*context)->controllers_))
     {
-      if (distributeTrajectory(robotTraj, context->controllers_, context->trajectory_parts_))
-        return context;
+      if (distributeTrajectory(*context))
+        return true;
     }
   }
   std::stringstream ss;
@@ -1180,7 +1172,7 @@ TrajectoryExecutionManager::TrajectoryExecutionContext* TrajectoryExecutionManag
     }
   }
   RCLCPP_ERROR(LOGGER, "Known controllers and their joints:\n%s", ss2.str().c_str());
-  return nullptr;
+  return false;
 }
 
 moveit_controller_manager::ExecutionStatus TrajectoryExecutionManager::executeAndWait(bool auto_clear)
@@ -1192,6 +1184,7 @@ moveit_controller_manager::ExecutionStatus TrajectoryExecutionManager::executeAn
 void TrajectoryExecutionManager::stopExecutionInternal()
 {
   // execution_state_mutex_ needs to have been locked by the caller
+  used_handles_mutex_.lock();
   for (const moveit_controller_manager::MoveItControllerHandlePtr& used_handle : used_handles)
     try
     {
@@ -1201,6 +1194,7 @@ void TrajectoryExecutionManager::stopExecutionInternal()
     {
       RCLCPP_ERROR(LOGGER, "Caught %s when canceling execution.", ex.what());
     }
+  used_handles_mutex_.unlock();
 }
 void TrajectoryExecutionManager::stopContinuousExecution(){
     stop_continuous_execution_ = true;
@@ -1212,7 +1206,7 @@ void TrajectoryExecutionManager::stopBlockingExecution(bool auto_clear)
 
   if (!execution_complete_)
   {
-    execution_state_mutex_.lock();
+    blocking_execution_state_mutex_.lock();
     if (!execution_complete_)
     {
       // we call cancel for all active handles; we know these are not being modified as we loop through them because of
@@ -1224,7 +1218,7 @@ void TrajectoryExecutionManager::stopBlockingExecution(bool auto_clear)
 
       // we set the status here; executePart() will not set status when execution_complete_ is true ahead of time
       trajectories_[current_context_]->last_execution_status_ = moveit_controller_manager::ExecutionStatus::PREEMPTED;
-      execution_state_mutex_.unlock();
+      blocking_execution_state_mutex_.unlock();
       RCLCPP_INFO(LOGGER, "Stopped trajectory execution.");
 
       // wait for the execution thread to finish
@@ -1239,7 +1233,7 @@ void TrajectoryExecutionManager::stopBlockingExecution(bool auto_clear)
         clear();
     }
     else{
-      execution_state_mutex_.unlock();
+      blocking_execution_state_mutex_.unlock();
     }
       
   }
@@ -1285,21 +1279,28 @@ void TrajectoryExecutionManager::execute(const ExecutionCompleteCallback& callba
 moveit_controller_manager::ExecutionStatus TrajectoryExecutionManager::waitForBlockingExecution()
 {
   {
-    boost::unique_lock<boost::mutex> ulock(execution_state_mutex_);
+    boost::unique_lock<boost::mutex> ulock(blocking_execution_state_mutex_);
     while (!execution_complete_)
       execution_complete_condition_.wait(ulock);
   }
-  /*
+
+  // this will join the thread for executing sequences of trajectories
+  stopBlockingExecution(false);
+
+  return last_execution_status_blocking_;
+}
+
+moveit_controller_manager::ExecutionStatus TrajectoryExecutionManager::waitForContinuousExecution()
+{
   {
     boost::unique_lock<boost::mutex> ulock(continuous_execution_thread_mutex_);
     while (!continuous_execution_queue_.empty())
       continuous_execution_condition_.wait(ulock);
   }
-  */
   // this will join the thread for executing sequences of trajectories
-  stopBlockingExecution(false);
+  stopContinuousExecution();
 
-  return last_execution_status_blocking_;
+  return last_execution_status_continuous_;
 }
 
 void TrajectoryExecutionManager::clear()
@@ -1346,9 +1347,11 @@ void TrajectoryExecutionManager::executeThread(const ExecutionCompleteCallback& 
     //Execute TrajectoryPart
     executePart(trajectories_[i],execution_complete_);
     current_context_ = -1;
-    if (trajectories_[i]->last_execution_status_ == moveit_controller_manager::ExecutionStatus::SUCCEEDED && part_callback)
+    last_execution_status_blocking_ = trajectories_[i]->last_execution_status_;
+
+    if (last_execution_status_blocking_ == moveit_controller_manager::ExecutionStatus::SUCCEEDED && part_callback)
       part_callback(i);
-    if ( trajectories_[i]->last_execution_status_ != moveit_controller_manager::ExecutionStatus::SUCCEEDED || execution_complete_)
+    if (last_execution_status_blocking_ != moveit_controller_manager::ExecutionStatus::SUCCEEDED || execution_complete_)
     {
       ++i;
       break;
@@ -1356,15 +1359,15 @@ void TrajectoryExecutionManager::executeThread(const ExecutionCompleteCallback& 
   }
 
   // only report that execution finished successfully when the robot actually stopped moving
-  if (trajectories_[i - 1]->last_execution_status_ == moveit_controller_manager::ExecutionStatus::SUCCEEDED)
+  if (last_execution_status_blocking_ == moveit_controller_manager::ExecutionStatus::SUCCEEDED)
     waitForRobotToStop(*trajectories_[i - 1]);
 
-  RCLCPP_INFO(LOGGER, "Completed trajectory execution with status %s ...", trajectories_[i - 1]->last_execution_status_.asString().c_str());
+  RCLCPP_INFO(LOGGER, "Completed trajectory execution with status %s ...", last_execution_status_blocking_.asString().c_str());
 
   // notify whoever is waiting for the event of trajectory completion
-  execution_state_mutex_.lock();
+  blocking_execution_state_mutex_.lock();
   execution_complete_ = true;
-  execution_state_mutex_.unlock();
+  blocking_execution_state_mutex_.unlock();
   execution_complete_condition_.notify_all();
 
   // clear the paths just executed, if needed
@@ -1373,7 +1376,7 @@ void TrajectoryExecutionManager::executeThread(const ExecutionCompleteCallback& 
 
   // call user-specified callback
   if (callback)
-    callback(trajectories_[i - 1]->last_execution_status_);
+    callback(last_execution_status_blocking_);
 }
 
 void TrajectoryExecutionManager::executePart(TrajectoryExecutionContext* context,bool& execution_complete_)
@@ -1454,12 +1457,16 @@ void TrajectoryExecutionManager::executePart(TrajectoryExecutionContext* context
     }
 
     RCLCPP_DEBUG_STREAM(LOGGER, "Populating the lists with " << handles.size() << " handles.");
+    used_handles_mutex_.lock();
     for (std::size_t i = 0; i < context->trajectory_parts_.size(); ++i)
     {
-      used_handles.insert(handles[i]);
+      used_handles.push_back(handles[i]);
     }
-    std::set<moveit_controller_manager::MoveItControllerHandlePtr> handle_set(handles.begin(), handles.end());  // TODO: If handles was a vector, this step could be skipped.
-    active_contexts_.insert(context);
+    used_handles_mutex_.unlock();
+
+    active_contexts_mutex_.lock();
+    active_contexts_.push_back(context);
+    active_contexts_mutex_.unlock();
 
     for (moveit_controller_manager::MoveItControllerHandlePtr& handle : handles)
     {
@@ -1473,7 +1480,8 @@ void TrajectoryExecutionManager::executePart(TrajectoryExecutionContext* context
                         "bound for the trajectory execution was %lf seconds). Stopping trajectory.",
                         expected_trajectory_duration.seconds());
             {
-              boost::mutex::scoped_lock slock(execution_state_mutex_);
+              //TODO
+              boost::mutex::scoped_lock slock(blocking_execution_state_mutex_);
               stopExecutionInternal();  // this is really tricky. we can't call stopBlockingExecution() here, so we call the
                                         // internal function only
             }
@@ -1496,16 +1504,17 @@ void TrajectoryExecutionManager::executePart(TrajectoryExecutionContext* context
         context->last_execution_status_ = handle->getLastExecutionStatus();
       }
     }
-    for (std::size_t i = 0; i < context->trajectory_parts_.size(); ++i)
+    //Surely there's a better way
+    used_handles_mutex_.lock();
+    for (int i = 0; i < context->trajectory_parts_.size(); ++i)
     {
-      used_handles.erase(handles[i]);
+      used_handles.erase(std::remove(used_handles.begin(), used_handles.end(), handles[i]), used_handles.end());
     }
-    active_contexts_.erase(active_contexts_.find(context));
-    
-    // clear the active handles
-    execution_state_mutex_.lock();
+    used_handles_mutex_.unlock();
 
-    execution_state_mutex_.unlock();
+    active_contexts_mutex_.lock();
+    active_contexts_.erase(std::remove(active_contexts_.begin(), active_contexts_.end(), context), active_contexts_.end());
+    active_contexts_mutex_.unlock();
   }
   else
   {
@@ -1588,9 +1597,14 @@ TrajectoryExecutionManager::getTrajectories() const
   return trajectories_;
 }
 
-moveit_controller_manager::ExecutionStatus TrajectoryExecutionManager::getLastExecutionStatus() const
+moveit_controller_manager::ExecutionStatus TrajectoryExecutionManager::getLastExecutionStatusBlocking() const
 {
   return last_execution_status_blocking_;
+}
+
+moveit_controller_manager::ExecutionStatus TrajectoryExecutionManager::getLastExecutionStatusContinuous() const
+{
+  return last_execution_status_continuous_;
 }
 
 bool TrajectoryExecutionManager::ensureActiveControllersForGroup(const std::string& group)
@@ -1759,89 +1773,7 @@ void TrajectoryExecutionManager::loadControllerParams()
   //   }
   // }
 }
-/*
-void TrajectoryExecutionManager::updateActiveHandlesAndContexts(std::set<moveit_controller_manager::MoveItControllerHandlePtr>& used_handles)
-{
-  RCLCPP_INFO(LOGGER, "DEBUG: Entered updateActiveHandlesAndContexts");
-  // Go through list of current trajectories, check the statuses of all handles
-  // for (auto& context_controllers_pair : active_contexts_map)  // first: context. second: handles_ for that trajectory
-  for (auto it = active_contexts_map.begin(); it != active_contexts_map.end(); )
-  {
-    auto& context = it->first;
-    auto& handles_ = it->second;
-    RCLCPP_INFO(LOGGER, "DEBUG: Update context");
 
-    //isRemainingPathValid(*context);
-
-    // TODO(felixvd): This doesn't cover all the cases, like TIMED_OUT, CONTROL_FAILED. Ugh.
-    bool some_aborted = false;
-    bool all_aborted = true;
-    bool some_running = false;
-    bool all_running = true;
-    bool some_succeeded = false;
-    bool all_succeeded = true;
-    for (const moveit_controller_manager::MoveItControllerHandlePtr& handle : handles_)
-    {
-      auto last_status = handle->getLastExecutionStatus();
-      if (last_status == moveit_controller_manager::ExecutionStatus::ABORTED ||
-          last_status == moveit_controller_manager::ExecutionStatus::TIMED_OUT ||
-          last_status == moveit_controller_manager::ExecutionStatus::FAILED || 
-          last_status == moveit_controller_manager::ExecutionStatus::PREEMPTED)
-          // TODO: This converts everything to ABORTED.
-      {
-        some_aborted = true;
-        all_succeeded = false;
-        all_running = false;
-      }
-      else if (last_status == moveit_controller_manager::ExecutionStatus::SUCCEEDED)
-      {
-        all_aborted = false;
-        some_succeeded = true;
-        all_running = false;
-      }
-      else if (last_status == moveit_controller_manager::ExecutionStatus::RUNNING)
-      {
-        all_aborted = false;
-        all_succeeded = false;
-        some_running = true;
-      }
-    }
-
-    moveit_controller_manager::ExecutionStatus combined_status;
-    if (some_aborted || all_aborted)
-      combined_status = moveit_controller_manager::ExecutionStatus::ABORTED;
-    else if (some_running || all_running)
-      combined_status = moveit_controller_manager::ExecutionStatus::RUNNING;
-    else if (all_succeeded)
-      combined_status = moveit_controller_manager::ExecutionStatus::SUCCEEDED;
-    else
-      continue;
-
-    if (combined_status == moveit_controller_manager::ExecutionStatus::SUCCEEDED ||
-        combined_status == moveit_controller_manager::ExecutionStatus::ABORTED)
-    {
-      context->execution_complete_callback(combined_status);
-      it = active_contexts_map.erase(it);
-      // TODO(cambel): remove used_handles here, lock handles until a context is fully completed
-    }else{
-      it++;
-    }
-  }
-
-  // Remove controller handles from list if they are not executing a trajectory
-  RCLCPP_INFO(LOGGER, "DEBUG: Cleaning used_handles");
-  for (std::set<moveit_controller_manager::MoveItControllerHandlePtr>::iterator uit = used_handles.begin(); uit != used_handles.end(); )
-    if ((*uit)->getLastExecutionStatus() != moveit_controller_manager::ExecutionStatus::RUNNING)
-    {
-      std::map<moveit_controller_manager::MoveItControllerHandlePtr, moveit_msgs::msg::RobotTrajectory>::iterator it;
-      uit = used_handles.erase(uit);
-    }
-    else
-      ++uit;
-  RCLCPP_INFO(LOGGER, "DEBUG: Done updateActiveHandlesAndContexts");
-}
-*/
-// simultaneous execution
 bool TrajectoryExecutionManager::checkCollisionBetweenTrajectories(const robot_trajectory::RobotTrajectory& new_trajectory,
                                                                    const TrajectoryExecutionContext* context)
 {
@@ -1913,7 +1845,7 @@ bool TrajectoryExecutionManager::checkContextForCollisions(TrajectoryExecutionCo
         d. Check if the two states collide, if so, return, no need to check anything else
        - May be optimized by active trajectory backward, it is more likely that any collision would happen at the end of the trajectory than at the beginning (given that the planning return a valid trajectory).
   */
-
+  active_contexts_mutex_.lock();
   for (const auto& currently_running_context : active_contexts_)
   {
     if (!checkCollisionBetweenTrajectories(context.trajectory_, currently_running_context))
@@ -1921,9 +1853,11 @@ bool TrajectoryExecutionManager::checkContextForCollisions(TrajectoryExecutionCo
       // Push to backlog
       RCLCPP_INFO(LOGGER, "DEBUG: Collision found between trajectory with duration: %lf and trajectory with duration: %lf" ,context.trajectory_.getDuration(),
                                 currently_running_context->trajectory_.getDuration());
+      active_contexts_mutex_.unlock();
       return false;
     }
   }
+  active_contexts_mutex_.unlock();
   return true;
 }
 
@@ -1943,7 +1877,7 @@ bool TrajectoryExecutionManager::checkCollisionsWithCurrentState(moveit_msgs::ms
     if(!ps->isPathValid(robot_state_msg, trajectory, trajectory.group_name))
        {
       RCLCPP_INFO(LOGGER, "DEBUG: New trajectory collides with the current robot state. Abort!");
-      //last_execution_status_ = moveit_controller_manager::ExecutionStatus::ABORTED;
+      //last_execution_status_continuous_ = moveit_controller_manager::ExecutionStatus::ABORTED;
       return false;
     }
   }
@@ -1979,7 +1913,6 @@ void TrajectoryExecutionManager::getContextHandles(TrajectoryExecutionContext& c
 bool TrajectoryExecutionManager::validateAndExecuteContext(TrajectoryExecutionContext& context)
 {
   RCLCPP_INFO(LOGGER, "DEBUG: Start validateAndExecuteContext");
-  //updateActiveHandlesAndContexts(used_handles);
 
   // Get the controller handles needed to execute the new trajectory
   std::vector<moveit_controller_manager::MoveItControllerHandlePtr> handles(context.controllers_.size());
@@ -2015,17 +1948,17 @@ bool TrajectoryExecutionManager::validateAndExecuteContext(TrajectoryExecutionCo
   // Check that controllers are not busy, wait for execution to finish if they are.
   for (std::size_t i = 0; i < context.trajectory_parts_.size(); ++i)
   {
-    std::set<moveit_controller_manager::MoveItControllerHandlePtr>::iterator uit = used_handles.begin();            
-
     // Check if required handle is already in use
-    while (uit != used_handles.end())
-      if (handles[i]->getName() == (*uit)->getName())  // If controller is busy, return false so trajectory is pushed to backlog
+    used_handles_mutex_.lock();
+
+    for(auto handle : used_handles){
+      if (handles[i]->getName() == handle->getName())  // If controller is busy, return false so trajectory is pushed to backlog
       {
-        RCLCPP_DEBUG_STREAM(LOGGER, "Handle " << handles[i]->getName() << " already in use: " << (*uit)->getLastExecutionStatus().asString());
+        RCLCPP_DEBUG_STREAM(LOGGER, "Handle " << handles[i]->getName() << " already in use: " << handle->getLastExecutionStatus().asString());
         return false;
       }
-      else
-        ++uit;
+    }
+    used_handles_mutex_.unlock();
   }
   // Skip trajectory if it collides with current state
   moveit_msgs::msg::RobotTrajectory trajectory;
@@ -2043,11 +1976,17 @@ bool TrajectoryExecutionManager::validateAndExecuteContext(TrajectoryExecutionCo
   
   std::thread([this,&context]() 
   {
-      bool execution_complete_ = false;
-      executePart(&context,execution_complete_);
-      checkBacklog();
-      RCLCPP_INFO(LOGGER, "Executed simultanous trajectory with status %s ...", context.last_execution_status_.asString().c_str());
-      context.execution_complete_callback(context.last_execution_status_);
+    bool execution_complete_ = false;
+    executePart(&context,execution_complete_);
+
+    //Check backlog for trajectories that can be executed again
+    checkBacklog();
+
+    //set the global execution status
+    last_execution_status_continuous_ = context.last_execution_status_;
+    RCLCPP_INFO(LOGGER, "Executed simultanous trajectory with status %s ...", last_execution_status_continuous_.asString().c_str());
+    
+    context.execution_complete_callback(last_execution_status_continuous_);
   }).detach();
 
   return true;
@@ -2147,5 +2086,89 @@ bool TrajectoryExecutionManager::isRemainingPathValid(TrajectoryExecutionContext
   return true;
 }
 
+bool TrajectoryExecutionManager::checkAllRemainingPaths()
+{
+  RCLCPP_INFO(LOGGER, "DEBUG: Start checking all trajectories");
+  planning_scene_monitor::LockedPlanningSceneRO ps(planning_scene_monitor_);
+  const collision_detection::AllowedCollisionMatrix acm = ps->getAllowedCollisionMatrix();
+
+  moveit::core::RobotState combinedState(robot_model_);
+  double* positions =  combinedState.getVariablePositions();
+
+  if(!active_contexts_.empty()){
+    collision_detection::CollisionRequest req;
+
+    for(int j = 0; j < 5; j++){
+      rclcpp::Time timeStamp =node_->now() + rclcpp::Duration::from_seconds(0.1*j);
+      for (int i = 0; i < active_contexts_.size(); i++)
+      {
+        int trajectory_index = active_contexts_[i]->getEstimatedIndex(timeStamp);
+        const double* positionsTrajectory = active_contexts_[i]->trajectory_.getWayPoint(trajectory_index).getVariablePositions();
+        for(uint8_t& joint_idx :  active_contexts_[i]->actuated_joint_indexes){
+          positions[joint_idx] = positionsTrajectory[joint_idx];
+        }
+      }
+      combinedState.update(true);
+
+      collision_detection::CollisionResult res;
+      ps->checkCollision(req, res, combinedState, acm);
+
+      if (res.collision)
+      {       
+        // Create mask to calculate combinations
+        // active_contexts_.size() + 1 to also get the isolated contexts 
+        std::string bitmask(2, 1); 
+        bitmask.resize(active_contexts_.size() + 1, 0);  
+
+        // Check all possible permutations of the contexts to get the colliding contexts
+        // This is done in two steps to reduce overhead
+        do {
+          //combinedState.positions = 0;
+          for (int i = 0; i < active_contexts_.size(); i++)
+          {
+            if (bitmask[i]) {
+              int trajectory_index = active_contexts_[i]->getEstimatedIndex(timeStamp);
+              const double* positionsTrajectory = active_contexts_[i]->trajectory_.getWayPoint(trajectory_index).getVariablePositions();
+              for(uint8_t& joint_idx :  active_contexts_[i]->actuated_joint_indexes){
+                positions[joint_idx] = positionsTrajectory[joint_idx];
+              }
+            }
+          }
+          combinedState.update(true);
+
+          collision_detection::CollisionResult res;
+          ps->checkCollision(req, res, combinedState, acm);
+          if (res.collision)
+          {          
+            RCLCPP_INFO(LOGGER, "Remaining Path invalid, cancelling execution.");
+            //Extract the contexts that are colliding
+            std::vector<int> colliding_contexts_;
+            for (int i = 0; i < active_contexts_.size(); i++)
+              if (bitmask[i]) colliding_contexts_.push_back(i);
+            
+            for(int i = 0; i < colliding_contexts_.size();i++){
+              auto context = active_contexts_[colliding_contexts_[i]];
+              if(!context->blocking){
+              // Get all the handles for the context
+              std::vector<moveit_controller_manager::MoveItControllerHandlePtr> handles(context->controllers_.size());
+              getContextHandles(*context,handles);
+
+              // Objects automatically get deleted from active_contexts and used handles in executePart
+              // Cancel all executions
+              for(auto& handle : handles){
+                handle->cancelExecution();
+              }
+              break;
+              }
+            }
+            return false;
+          }
+        } while (std::prev_permutation(bitmask.begin(), bitmask.end()));
+      }
+  }
+  }
+    RCLCPP_INFO(LOGGER, "Finished checking all Paths");
+    return true;
+}
 
 }  // namespace trajectory_execution_manager

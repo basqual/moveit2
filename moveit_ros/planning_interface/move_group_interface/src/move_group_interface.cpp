@@ -938,6 +938,7 @@ public:
 
     moveit_msgs::action::ExecuteTrajectory::Goal goal;
     goal.trajectory = trajectory;
+    goal.backlog_timeout = backlog_timeout;
 
     auto goal_handle_future = execute_action_client_->async_send_goal(goal, send_goal_opts);
     if (!wait)

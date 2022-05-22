@@ -484,10 +484,10 @@ moveit_msgs::msg::MoveItErrorCodes plan_execution::PlanExecution::executeAndMoni
     }
     else
     {
-      if (trajectory_execution_manager_->getLastExecutionStatus() ==
+      if (trajectory_execution_manager_->getLastExecutionStatusBlocking() ==
           moveit_controller_manager::ExecutionStatus::SUCCEEDED)
         result.val = moveit_msgs::msg::MoveItErrorCodes::SUCCESS;
-      else if (trajectory_execution_manager_->getLastExecutionStatus() ==
+      else if (trajectory_execution_manager_->getLastExecutionStatusBlocking() ==
                moveit_controller_manager::ExecutionStatus::TIMED_OUT)
         result.val = moveit_msgs::msg::MoveItErrorCodes::TIMED_OUT;
       else
