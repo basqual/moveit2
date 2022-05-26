@@ -1452,9 +1452,14 @@ void TrajectoryExecutionManager::executePart(TrajectoryExecutionContext* context
       const double current_margin = margin_it != controller_allowed_goal_duration_margin_.end() ?
                                         margin_it->second :
                                         allowed_goal_duration_margin_;
-    
-    //TODO                                    
-    expected_trajectory_duration = std::max( rclcpp::Duration::from_seconds(context->trajectory_.getDuration()) * current_scaling +  rclcpp::Duration::from_seconds(current_margin), expected_trajectory_duration);
+
+    // This also scales the duration that the controller waits, if the timestamp is in the future - This behaviour
+    // is copied from how it was before. Is this intended?
+    auto d = context->trajectory_.getStartTime() > current_time ? 
+                          rclcpp::Duration::from_seconds(context->trajectory_.getDuration()) + context->trajectory_.getStartTime() - current_time :
+                          rclcpp::Duration::from_seconds(context->trajectory_.getDuration());
+                                   
+    expected_trajectory_duration = std::max( d * current_scaling +  rclcpp::Duration::from_seconds(current_margin), expected_trajectory_duration);
     }
 
     RCLCPP_DEBUG_STREAM(LOGGER, "Populating the lists with " << handles.size() << " handles.");
@@ -2078,7 +2083,7 @@ bool TrajectoryExecutionManager::isRemainingPathValid(TrajectoryExecutionContext
 
 bool TrajectoryExecutionManager::checkAllRemainingPaths()
 {
-  RCLCPP_DEBUG(LOGGER, "Start checking all trajectories");
+  RCLCPP_INFO(LOGGER, "Start checking all trajectories");
   planning_scene_monitor::LockedPlanningSceneRO ps(planning_scene_monitor_);
   const collision_detection::AllowedCollisionMatrix acm = ps->getAllowedCollisionMatrix();
 
@@ -2155,16 +2160,19 @@ bool TrajectoryExecutionManager::checkAllRemainingPaths()
             for(std::size_t i = 0; i < colliding_contexts_.size();i++){
               auto context = active_contexts_[colliding_contexts_[i]];
               if(!context->blocking){
-              // Get all the handles for the context
-              std::vector<moveit_controller_manager::MoveItControllerHandlePtr> handles(context->controllers_.size());
-              getContextHandles(*context,handles);
+                // Get all the handles for the context
+                std::vector<moveit_controller_manager::MoveItControllerHandlePtr> handles(context->controllers_.size());
+                getContextHandles(*context,handles);
 
-              // Objects automatically get deleted from active_contexts and used handles in executePart
-              // Cancel all executions
-              for(auto& handle : handles){
-                handle->cancelExecution();
-              }
-              break;
+                // Objects automatically get deleted from active_contexts and used handles in executePart
+                // Cancel all executions
+                for(auto& handle : handles){
+                  handle->cancelExecution();
+                }
+              }else{
+                // Scene update in plan_execution only gets triggered with GEOMETRY and TRANSFORM events
+                // So we trigger it manually, to tell it that it should check if the path is still valid
+                planning_scene_monitor_->triggerSceneUpdateEvent(planning_scene_monitor::PlanningSceneMonitor::UPDATE_GEOMETRY);
               }
             }
             return false;
@@ -2173,7 +2181,7 @@ bool TrajectoryExecutionManager::checkAllRemainingPaths()
       }
     }
   }
-  RCLCPP_DEBUG(LOGGER, "Finished checking all Paths");
+  RCLCPP_INFO(LOGGER, "Finished checking all Paths");
   return true;
 }
 

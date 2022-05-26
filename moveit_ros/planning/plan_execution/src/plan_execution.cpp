@@ -431,6 +431,7 @@ moveit_msgs::msg::MoveItErrorCodes plan_execution::PlanExecution::executeAndMoni
     {
       new_scene_update_ = false;
       std::pair<int, int> current_index = trajectory_execution_manager_->getCurrentExpectedTrajectoryIndex();
+      RCLCPP_INFO(LOGGER, "New scene");
       if (!isRemainingPathValid(plan, current_index))
       {
         RCLCPP_INFO(LOGGER, "Trajectory component '%s' is invalid after scene update",
