@@ -2094,14 +2094,24 @@ bool TrajectoryExecutionManager::checkAllRemainingPaths()
     collision_detection::CollisionRequest req;
     collision_detection::CollisionResult res;
 
-    // Look ahead 1s ? How much? 
-    for(std::size_t j = 0; j < 10; j++){
-      rclcpp::Time timeStamp =node_->now() + rclcpp::Duration::from_seconds( 0.1 * j );
+    double nextDuration;
+    rclcpp::Time timeStamp = node_->now();
+    rclcpp::Duration maxDuration = rclcpp::Duration::from_seconds(1.0);
+    for(auto ctx : active_contexts_){
+      maxDuration = std::min(maxDuration,rclcpp::Duration::from_seconds(ctx->trajectory_.getDuration() - ctx->trajectory_.getWayPointDurationFromStart(ctx->getEstimatedIndex(timeStamp))));
+    }
+
+    do{
+      nextDuration = std::numeric_limits<double>::max();
       for(std::size_t i = 0; i < active_contexts_.size(); i++)
       {
         // Get indexes for before and after the timestep and interpolate those values
-        int before, after;double blend;
-        active_contexts_[i]->trajectory_.findWayPointIndicesForDurationAfterStart((timeStamp - active_contexts_[i]->start_time).seconds(),before,after,blend);
+        int before, after; double blend;
+        active_contexts_[i]->trajectory_.findWayPointIndicesForDurationAfterStart((timeStamp - active_contexts_[i]->start_time).seconds(), before, after, blend);
+
+        //Get the minimum next duration to get every discrete step of all of the trajectories
+        nextDuration =  std::min(nextDuration,active_contexts_[i]->trajectory_.getWayPointDurationFromPrevious(after)*blend);
+
         const double* positionsBefore = active_contexts_[i]->trajectory_.getWayPoint(before).getVariablePositions();
         const double* positionsAfter = active_contexts_[i]->trajectory_.getWayPoint(after).getVariablePositions();
 
@@ -2109,11 +2119,13 @@ bool TrajectoryExecutionManager::checkAllRemainingPaths()
           positions[joint_idx] = positionsBefore[joint_idx] + blend*(positionsAfter[joint_idx] - positionsBefore[joint_idx]);
         }
       }
+      // Fixes an issue with the nextDuration being too big and the rclcpp::Time overflowing
+      if(nextDuration > maxDuration.seconds())break;
+    
       combinedState.update(true);
 
       res.clear();
       ps->checkCollision(req, res, combinedState, acm);
-
       if (res.collision)
       {       
         // Create mask to calculate combinations
@@ -2179,7 +2191,7 @@ bool TrajectoryExecutionManager::checkAllRemainingPaths()
           }
         } while (std::prev_permutation(bitmask.begin(), bitmask.end()));
       }
-    }
+    }while((timeStamp += rclcpp::Duration::from_seconds(nextDuration)) - node_->now() < maxDuration );
   }
   RCLCPP_INFO(LOGGER, "Finished checking all Paths");
   return true;
