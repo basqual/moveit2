@@ -424,24 +424,24 @@ void TrajectoryExecutionManager::continuousExecutionThread()
   rclcpp::Rate r(10);
   while(run_continuous_execution_thread_)
   {  
-    RCLCPP_DEBUG(LOGGER,"Main Loop");
     if (!stop_continuous_execution_ && ( !active_contexts_.empty() || !backlog.empty()) && continuous_execution_queue_.empty())
     {
-      if(!checkAllRemainingPaths()){
-        RCLCPP_ERROR(LOGGER,"Path is not valid anymore");
-
+      if(!active_contexts_.empty()){
+        // Online Collision Detector
+        checkAllRemainingPaths();
+        // Update timestamps of the trajectories to match the actual execution state
+        for(auto context : active_contexts_)
+          updateTimestamps(*context);
       }
-      RCLCPP_DEBUG(LOGGER,"Looping");
-      checkBacklogExpiration();
+      if(!backlog.empty())
+        checkBacklogExpiration();
+
       r.sleep();
     }
-    // Now it always runs, repair this
-    /*
     else if(active_contexts_.empty() && backlog.empty() && continuous_execution_queue_.empty()){
         boost::unique_lock<boost::mutex> ulock(continuous_execution_thread_mutex_);
         continuous_execution_condition_.wait(ulock);
     }
-    */
 
     // If stop-flag is set, break out
     if (stop_continuous_execution_ || !run_continuous_execution_thread_)
@@ -1474,6 +1474,12 @@ void TrajectoryExecutionManager::executePart(TrajectoryExecutionContext* context
     active_contexts_.push_back(context);
     active_contexts_mutex_.unlock();
 
+    // Notify the continuous queue to continue
+    // This also happens when executing in a blocking manner,
+    // But this is on purpose, as the online collision checker as well as
+    // the timestamp update thus will be run for blocking executing as well!
+    continuous_execution_condition_.notify_all();
+
     for (moveit_controller_manager::MoveItControllerHandlePtr& handle : handles)
     {
       if (execution_duration_monitoring_)
@@ -1942,9 +1948,11 @@ bool TrajectoryExecutionManager::validateAndExecuteContext(TrajectoryExecutionCo
     // Check whether this trajectory starts at current robot state
   if (!validate(context))
   {
-    RCLCPP_ERROR(LOGGER, "Trajectory became invalid before execution, abort.");
-    context.execution_complete_callback(moveit_controller_manager::ExecutionStatus::ABORTED);
-    return true;
+    RCLCPP_ERROR(LOGGER, "Trajectory not valid at this point");
+    // return false in order to push it to the backlog, maybe the trajectory will start at the end of the current
+    // otherwise it will expire
+    //context.execution_complete_callback(moveit_controller_manager::ExecutionStatus::ABORTED);
+    return false;
   }
 
   // Check that controllers are not busy, wait for execution to finish if they are.
@@ -1975,11 +1983,9 @@ bool TrajectoryExecutionManager::validateAndExecuteContext(TrajectoryExecutionCo
   if (!checkContextForCollisions(context)){
     return false;
   }
-  
+
   std::thread([this,&context]() 
   {
-    continuous_execution_condition_.notify_all();
-
     bool execution_complete_ = false;
     executePart(&context,execution_complete_);
 
@@ -2010,12 +2016,12 @@ bool TrajectoryExecutionManager::hasCommonHandles(TrajectoryExecutionContext& co
   return std::find_first_of(ctx1_handles.begin(), ctx1_handles.end(),ctx2_handles.begin(), ctx2_handles.end()) != ctx1_handles.end();
 }
 
-//TODO: Is this needed for real robots? In sim, it doesn't do anything...
+//TODO: Is this needed for real robots? In sim, it doesn't do much...
 void TrajectoryExecutionManager::updateTimestamps(TrajectoryExecutionContext& context)
 {
   moveit::core::RobotStatePtr real_state = csm_->getCurrentState();
 
-  robot_trajectory::RobotTrajectory currently_running_trajectory = context.trajectory_;
+  robot_trajectory::RobotTrajectory& currently_running_trajectory = context.trajectory_;
 
   //Get the duration of the running trajectory
   double durationFromStart = (node_->now() - context.start_time).seconds();
@@ -2050,12 +2056,10 @@ void TrajectoryExecutionManager::updateTimestamps(TrajectoryExecutionContext& co
   //Calculate the difference between real and estimated timestamp
   double time_diff = currently_running_trajectory.getWayPointDurationFromPrevious(after) * (realBlend - blend);
 
-  RCLCPP_DEBUG(LOGGER, "Time difference (estimated/real) (Abs): %f",time_diff);
-  RCLCPP_DEBUG(LOGGER, "index: %i",before);
-  RCLCPP_DEBUG(LOGGER, "Before adjusting: %f",currently_running_trajectory.getWayPointDurationFromPrevious(after));
+  RCLCPP_DEBUG(LOGGER, "Total duration before adjusting: %f",currently_running_trajectory.getDuration());
   //Adjust this timestamp with the calculated corretcion
-  currently_running_trajectory.setWayPointDurationFromPrevious(after,currently_running_trajectory.getWayPointDurationFromPrevious(after) + time_diff);
-  RCLCPP_DEBUG(LOGGER, "After adjusting: %f",currently_running_trajectory.getWayPointDurationFromPrevious(after));
+  currently_running_trajectory.setWayPointDurationFromPrevious(after,currently_running_trajectory.getWayPointDurationFromPrevious(after) - time_diff);
+  RCLCPP_DEBUG(LOGGER, "Total duration after adjusting: %f",currently_running_trajectory.getDuration());
 
 }
 
@@ -2083,7 +2087,7 @@ bool TrajectoryExecutionManager::isRemainingPathValid(TrajectoryExecutionContext
 
 bool TrajectoryExecutionManager::checkAllRemainingPaths()
 {
-  RCLCPP_INFO(LOGGER, "Start checking all trajectories");
+  RCLCPP_DEBUG(LOGGER, "Start checking all trajectories");
   planning_scene_monitor::LockedPlanningSceneRO ps(planning_scene_monitor_);
   const collision_detection::AllowedCollisionMatrix acm = ps->getAllowedCollisionMatrix();
 
@@ -2160,7 +2164,7 @@ bool TrajectoryExecutionManager::checkAllRemainingPaths()
           combinedState.update(true);
 
           res.clear();
-          ps->checkCollision(req, res, combinedState, acm);
+          ps->checkCollisionUnpadded(req, res, combinedState, acm);
           if (res.collision)
           {          
             RCLCPP_INFO(LOGGER, "Remaining Path invalid, cancelling execution.");
@@ -2193,7 +2197,7 @@ bool TrajectoryExecutionManager::checkAllRemainingPaths()
       }
     }while((timeStamp += rclcpp::Duration::from_seconds(nextDuration)) - node_->now() < maxDuration );
   }
-  RCLCPP_INFO(LOGGER, "Finished checking all Paths");
+  RCLCPP_DEBUG(LOGGER, "Finished checking all Paths");
   return true;
 }
 
