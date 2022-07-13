@@ -59,8 +59,6 @@ static const char* DEFAULT_CAPABILITIES[] = {
    "move_group/MoveGroupKinematicsService",
    "move_group/MoveGroupExecuteTrajectoryAction",
    "move_group/MoveGroupMoveAction",
-    // TODO (ddengster) : wait for port for moveit_ros_manipulation package
-   //"move_group/MoveGroupPickPlaceAction",
    "move_group/MoveGroupPlanService",
    "move_group/MoveGroupQueryPlannersService",
    "move_group/MoveGroupStateValidationService",
@@ -296,6 +294,13 @@ int main(int argc, char** argv)
     rclcpp::executors::MultiThreadedExecutor executor;
 
     move_group::MoveGroupExe mge(moveit_cpp, default_planning_pipeline, debug);
+
+    bool monitor_dynamics;
+    if (nh->get_parameter("monitor_dynamics", monitor_dynamics) && monitor_dynamics)
+    {
+      RCLCPP_INFO(LOGGER, "MoveGroup monitors robot dynamics (higher load)");
+      planning_scene_monitor->getStateMonitor()->enableCopyDynamics(true);
+    }
 
     planning_scene_monitor->publishDebugInformation(debug);
 

@@ -174,6 +174,7 @@ RobotTrajectory& RobotTrajectory::unwind()
 
     for (std::size_t j = 1; j < waypoints_.size(); ++j)
     {
+      double current_value = waypoints_[j]->getJointPositions(cont_joint)[0];
       if (last_value > current_value + M_PI)
         running_offset += 2.0 * M_PI;
       else if (current_value > last_value + M_PI)

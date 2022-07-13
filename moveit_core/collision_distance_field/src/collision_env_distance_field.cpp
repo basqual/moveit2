@@ -35,6 +35,11 @@
 /* Author: E. Gil Jones */
 
 #include <moveit/robot_model/robot_model.h>
+#include <rclcpp/clock.hpp>
+#include <rclcpp/duration.hpp>
+#include <rclcpp/logger.hpp>
+#include <rclcpp/logging.hpp>
+#include <rclcpp/time.hpp>
 #if __has_include(<tf2_eigen/tf2_eigen.hpp>)
 #include <tf2_eigen/tf2_eigen.hpp>
 #else
@@ -166,7 +171,7 @@ void CollisionEnvDistanceField::generateCollisionCheckingStructures(
     // DistanceFieldCacheEntry for CollisionRobot");
     DistanceFieldCacheEntryPtr new_dfce =
         generateDistanceFieldCacheEntry(group_name, state, acm, generate_distance_field);
-    boost::mutex::scoped_lock slock(update_cache_lock_);
+    std::scoped_lock slock(update_cache_lock_);
     (const_cast<CollisionEnvDistanceField*>(this))->distance_field_cache_entry_ = new_dfce;
     dfce = new_dfce;
   }
