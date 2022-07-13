@@ -401,12 +401,12 @@ bool TrajectoryExecutionManager::pushAndExecuteSimultaneous(const moveit_msgs::m
     context->blocking = false;
     RCLCPP_DEBUG(LOGGER, "Backlog_timeout: %f",backlog_timeout.seconds());
     {
-      boost::mutex::scoped_lock slock(continuous_execution_thread_mutex_);
+      std::scoped_lock slock(continuous_execution_thread_mutex_);
       RCLCPP_INFO(LOGGER,"Continuous execution thread locked");
       continuous_execution_queue_.push_back(context);
       if (!continuous_execution_thread_)
         continuous_execution_thread_.reset(
-            new boost::thread(boost::bind(&TrajectoryExecutionManager::continuousExecutionThread, this)));
+            new std::thread(std::bind(&TrajectoryExecutionManager::continuousExecutionThread, this)));
     }
     context->last_execution_status_ = moveit_controller_manager::ExecutionStatus::SUCCEEDED;
     continuous_execution_condition_.notify_all();
@@ -439,7 +439,7 @@ void TrajectoryExecutionManager::continuousExecutionThread()
       r.sleep();
     }
     else if(active_contexts_.empty() && backlog.empty() && continuous_execution_queue_.empty()){
-        boost::unique_lock<boost::mutex> ulock(continuous_execution_thread_mutex_);
+        std::unique_lock<std::mutex> ulock(continuous_execution_thread_mutex_);
         continuous_execution_condition_.wait(ulock);
     }
 
@@ -471,7 +471,7 @@ void TrajectoryExecutionManager::continuousExecutionThread()
       RCLCPP_DEBUG(LOGGER, "Queue Size: %li",continuous_execution_queue_.size());
       TrajectoryExecutionContext* context = nullptr;
       {
-        boost::mutex::scoped_lock slock(continuous_execution_thread_mutex_);
+        std::scoped_lock slock(continuous_execution_thread_mutex_);
         if (continuous_execution_queue_.empty())
           break;
         context = continuous_execution_queue_.front();
@@ -1223,7 +1223,7 @@ void TrajectoryExecutionManager::stopBlockingExecution(bool auto_clear)
       RCLCPP_INFO(LOGGER, "Stopped trajectory execution.");
 
       // wait for the execution thread to finish
-      boost::mutex::scoped_lock lock(blocking_execution_thread_mutex_);
+      std::scoped_lock lock(blocking_execution_thread_mutex_);
       if (blocking_execution_thread_)
       {
         blocking_execution_thread_->join();
@@ -1241,7 +1241,7 @@ void TrajectoryExecutionManager::stopBlockingExecution(bool auto_clear)
   else if (blocking_execution_thread_)  // just in case we have some thread waiting to be joined from some point in the past, we
                                // join it now
   {
-    boost::mutex::scoped_lock lock(blocking_execution_thread_mutex_);
+    std::scoped_lock lock(blocking_execution_thread_mutex_);
     if (blocking_execution_thread_)
     {
       blocking_execution_thread_->join();
@@ -1273,14 +1273,14 @@ void TrajectoryExecutionManager::execute(const ExecutionCompleteCallback& callba
 
   // start the execution thread
   execution_complete_ = false;
-  blocking_execution_thread_ = std::make_unique<boost::thread>(&TrajectoryExecutionManager::executeThread, this, callback,
+  blocking_execution_thread_ = std::make_unique<std::thread>(&TrajectoryExecutionManager::executeThread, this, callback,
                                                       part_callback, auto_clear);
 }
 
 moveit_controller_manager::ExecutionStatus TrajectoryExecutionManager::waitForBlockingExecution()
 {
   {
-    boost::unique_lock<boost::mutex> ulock(blocking_execution_state_mutex_);
+    std::unique_lock<std::mutex> ulock(blocking_execution_state_mutex_);
     while (!execution_complete_)
       execution_complete_condition_.wait(ulock);
   }
@@ -1294,7 +1294,7 @@ moveit_controller_manager::ExecutionStatus TrajectoryExecutionManager::waitForBl
 moveit_controller_manager::ExecutionStatus TrajectoryExecutionManager::waitForContinuousExecution()
 {
   {
-    boost::unique_lock<boost::mutex> ulock(continuous_execution_thread_mutex_);
+    std::unique_lock<std::mutex> ulock(continuous_execution_thread_mutex_);
     while (!continuous_execution_queue_.empty())
       continuous_execution_condition_.wait(ulock);
   }
@@ -1312,7 +1312,7 @@ void TrajectoryExecutionManager::clear()
       delete trajectory;
     trajectories_.clear();
     {
-      boost::mutex::scoped_lock slock(continuous_execution_thread_mutex_);
+      std::scoped_lock slock(continuous_execution_thread_mutex_);
       while (!continuous_execution_queue_.empty())
       {
         delete continuous_execution_queue_.front();

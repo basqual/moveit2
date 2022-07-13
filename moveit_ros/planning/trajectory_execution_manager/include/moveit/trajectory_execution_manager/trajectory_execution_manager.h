@@ -50,12 +50,12 @@
 #include <std_msgs/msg/string.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <moveit/controller_manager/controller_manager.h>
-#include <boost/thread.hpp>
 #include <pluginlib/class_loader.hpp>
 #include <moveit/robot_trajectory/robot_trajectory.h>
 
 #include <memory>
 #include <deque>
+#include <thread>
 #include <algorithm>
 
 #include "moveit_trajectory_execution_manager_export.h"
@@ -74,11 +74,11 @@ public:
 
   /// Definition of the function signature that is called when the execution of all the pushed trajectories completes.
   /// The status of the overall execution is passed as argument
-  typedef boost::function<void(const moveit_controller_manager::ExecutionStatus&)> ExecutionCompleteCallback;
+  typedef std::function<void(const moveit_controller_manager::ExecutionStatus&)> ExecutionCompleteCallback;
 
   /// Definition of the function signature that is called when the execution of a pushed trajectory completes
   /// successfully.
-  using PathSegmentCompleteCallback = boost::function<void(std::size_t)>;
+  using PathSegmentCompleteCallback = std::function<void(std::size_t)>;
 
   
   struct TrajectoryPart
@@ -405,30 +405,30 @@ private:
   bool manage_controllers_;
 
   // Thread used to execute trajectories using the execute() command. This is blocking and executes only one TrajectoryContext at a time.
-  std::unique_ptr<boost::thread> blocking_execution_thread_;
+  std::unique_ptr<std::thread> blocking_execution_thread_;
 
   // Thread used to execute trajectories using pushAndExecuteSimultaneous(). This executes multiple TrajectoryContexts at the same time.
-  std::unique_ptr<boost::thread> continuous_execution_thread_;
+  std::unique_ptr<std::thread> continuous_execution_thread_;
 
-  boost::mutex blocking_execution_state_mutex_;
+  std::mutex blocking_execution_state_mutex_;
 
-  boost::mutex continuous_execution_thread_mutex_;
-  boost::mutex blocking_execution_thread_mutex_;
+  std::mutex continuous_execution_thread_mutex_;
+  std::mutex blocking_execution_thread_mutex_;
 
-  boost::mutex used_handles_mutex_;
-  boost::mutex active_contexts_mutex_;
+  std::mutex used_handles_mutex_;
+  std::mutex active_contexts_mutex_;
 
-  boost::condition_variable continuous_execution_condition_;
+  std::condition_variable continuous_execution_condition_;
 
   // this condition is used to notify the completion of execution for given trajectories
-  boost::condition_variable execution_complete_condition_;
+  std::condition_variable execution_complete_condition_;
 
   moveit_controller_manager::ExecutionStatus last_execution_status_blocking_;
   moveit_controller_manager::ExecutionStatus last_execution_status_continuous_;
 
   int current_context_;
   std::vector<rclcpp::Time> time_index_;  // used to find current expected trajectory location
-  mutable boost::mutex time_index_mutex_;
+  mutable std::mutex time_index_mutex_;
   bool execution_complete_;
 
   bool stop_continuous_execution_;
