@@ -2106,6 +2106,9 @@ bool TrajectoryExecutionManager::checkAllRemainingPaths()
     }
 
     do{
+      // If trajectory hasn't started yet
+      if((timeStamp - node_->now()).seconds() < 0) break;
+
       nextDuration = std::numeric_limits<double>::max();
       for(std::size_t i = 0; i < active_contexts_.size(); i++)
       {

@@ -88,6 +88,11 @@ public:
   /** \brief Get the poses from the objects identified by the given object ids list. */
   std::map<std::string, geometry_msgs::msg::Pose> getObjectPoses(const std::vector<std::string>& object_ids);
 
+  /** \brief Get the colors from the objects identified by the given object ids list. If no ids are provided, 
+   * return all the known objects. */
+  std::map<std::string, moveit_msgs::msg::ObjectColor> 
+  getObjectColors(const std::vector<std::string>& object_ids = std::vector<std::string>());
+
   /** \brief Get the objects identified by the given object ids list. If no ids are provided, return all the known
    * objects. */
   std::map<std::string, moveit_msgs::msg::CollisionObject>

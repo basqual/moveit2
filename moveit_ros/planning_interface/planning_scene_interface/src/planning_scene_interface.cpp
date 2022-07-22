@@ -169,6 +169,28 @@ public:
     return result;
   }
 
+  std::map<std::string, moveit_msgs::msg::ObjectColor> getObjectColors(const std::vector<std::string>& object_ids)
+  {
+    auto request = std::make_shared<moveit_msgs::srv::GetPlanningScene::Request>();
+    moveit_msgs::srv::GetPlanningScene::Response::SharedPtr response;
+    std::map<std::string, moveit_msgs::msg::ObjectColor> result;
+    request->components.components = request->components.OBJECT_COLORS;
+
+    auto res = planning_scene_service_->async_send_request(request);
+    if (rclcpp::spin_until_future_complete(node_, res) == rclcpp::FutureReturnCode::SUCCESS)
+    {
+      response = res.get();
+      for (const moveit_msgs::msg::ObjectColor& object_color : response->scene.object_colors)
+      {
+        if (object_ids.empty() || std::find(object_ids.begin(), object_ids.end(), object_color.id) != object_ids.end())
+        {
+          result[object_color.id] = object_color;
+        }
+      }
+    }
+    return result;
+  }
+
   std::map<std::string, moveit_msgs::msg::CollisionObject> getObjects(const std::vector<std::string>& object_ids)
   {
     auto request = std::make_shared<moveit_msgs::srv::GetPlanningScene::Request>();
@@ -324,6 +346,12 @@ std::map<std::string, moveit_msgs::msg::CollisionObject>
 PlanningSceneInterface::getObjects(const std::vector<std::string>& object_ids)
 {
   return impl_->getObjects(object_ids);
+}
+
+std::map<std::string, moveit_msgs::msg::ObjectColor>
+PlanningSceneInterface::getObjectColors(const std::vector<std::string>& object_ids)
+{
+  return impl_->getObjectColors(object_ids);
 }
 
 std::map<std::string, moveit_msgs::msg::AttachedCollisionObject>
